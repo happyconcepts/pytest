@@ -9,7 +9,8 @@ Default stdout/stderr/stdin capturing behaviour
 
 During test execution any output sent to ``stdout`` and ``stderr`` is
 captured.  If a test or a setup method fails its according captured
-output will usually be shown along with the failure traceback.
+output will usually be shown along with the failure traceback. (this
+behavior can be configured by the ``--show-capture`` command-line option).
 
 In addition, ``stdin`` is set to a "null" object which will
 fail on attempts to read from it because it is rarely desired
@@ -67,16 +68,16 @@ of the failing function and hide the other one::
     platform linux -- Python 3.x.y, pytest-3.x.y, py-1.x.y, pluggy-0.x.y
     rootdir: $REGENDOC_TMPDIR, inifile:
     collected 2 items
-    
+
     test_module.py .F                                                    [100%]
-    
+
     ================================= FAILURES =================================
     ________________________________ test_func2 ________________________________
-    
+
         def test_func2():
     >       assert False
     E       assert False
-    
+
     test_module.py:9: AssertionError
     -------------------------- Captured stdout setup ---------------------------
     setting up <function test_func2 at 0xdeadbeef>
@@ -91,7 +92,7 @@ an example test function that performs some output related checks:
 
 .. code-block:: python
 
-    def test_myoutput(capsys): # or use "capfd" for fd-level
+    def test_myoutput(capsys):  # or use "capfd" for fd-level
         print("hello")
         sys.stderr.write("world\n")
         captured = capsys.readouterr()
@@ -144,9 +145,9 @@ as a context manager, disabling capture inside the ``with`` block:
 .. code-block:: python
 
     def test_disabling_capturing(capsys):
-        print('this output is captured')
+        print("this output is captured")
         with capsys.disabled():
-            print('output not captured, going directly to sys.stdout')
-        print('this output is also captured')
+            print("output not captured, going directly to sys.stdout")
+        print("this output is also captured")
 
 .. include:: links.inc

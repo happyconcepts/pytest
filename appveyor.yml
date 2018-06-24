@@ -27,7 +27,7 @@ environment:
   - TOXENV: "py36-pluggymaster"
   - TOXENV: "py27-nobyte"
   - TOXENV: "doctesting"
-  - TOXENV: "py35-freeze"
+  - TOXENV: "py36-freeze"
   - TOXENV: "docs"
 
 install:
@@ -42,3 +42,7 @@ build: false  # Not a C# project, build stuff at the test step instead.
 
 test_script:
   - call scripts\call-tox.bat
+
+cache:
+  - '%LOCALAPPDATA%\pip\cache'
+  - '%USERPROFILE%\.cache\pre-commit'
