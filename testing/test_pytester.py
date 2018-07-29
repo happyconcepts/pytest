@@ -84,9 +84,7 @@ def test_testdir_runs_with_plugin(testdir):
 
 
 def make_holder():
-
     class apiclass(object):
-
         def pytest_xyz(self, arg):
             "x"
 
@@ -143,7 +141,6 @@ def test_makepyfile_utf8(testdir):
 
 
 class TestInlineRunModulesCleanup(object):
-
     def test_inline_run_test_module_not_cleaned_up(self, testdir):
         test_mod = testdir.makepyfile("def test_foo(): assert True")
         result = testdir.inline_run(str(test_mod))
@@ -154,7 +151,6 @@ class TestInlineRunModulesCleanup(object):
         assert result2.ret == EXIT_TESTSFAILED
 
     def spy_factory(self):
-
         class SysModulesSnapshotSpy(object):
             instances = []
 
@@ -220,7 +216,6 @@ class TestInlineRunModulesCleanup(object):
 
 
 def test_inline_run_clean_sys_paths(testdir):
-
     def test_sys_path_change_cleanup(self, testdir):
         test_path1 = testdir.tmpdir.join("boink1").strpath
         test_path2 = testdir.tmpdir.join("boink2").strpath
@@ -245,7 +240,6 @@ def test_inline_run_clean_sys_paths(testdir):
         assert sys.meta_path == original_meta_path
 
     def spy_factory(self):
-
         class SysPathsSnapshotSpy(object):
             instances = []
 
@@ -370,9 +364,7 @@ class TestSysPathsSnapshot(object):
         original = list(sys_path)
         original_other = list(getattr(sys, other_path_type))
         snapshot = SysPathsSnapshot()
-        transformation = {
-            "source": (0, 1, 2, 3, 4, 5), "target": (6, 2, 9, 7, 5, 8)
-        }  # noqa: E201
+        transformation = {"source": (0, 1, 2, 3, 4, 5), "target": (6, 2, 9, 7, 5, 8)}
         assert sys_path == [self.path(x) for x in transformation["source"]]
         sys_path[1] = self.path(6)
         sys_path[3] = self.path(7)
@@ -399,3 +391,8 @@ class TestSysPathsSnapshot(object):
         assert getattr(sys, path_type) == original_data
         assert getattr(sys, other_path_type) is original_other
         assert getattr(sys, other_path_type) == original_other_data
+
+
+def test_testdir_subprocess(testdir):
+    testfile = testdir.makepyfile("def test_one(): pass")
+    assert testdir.runpytest_subprocess(testfile).ret == 0

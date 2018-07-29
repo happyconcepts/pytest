@@ -8,7 +8,6 @@ import os
 import collections
 import warnings
 from textwrap import dedent
-from itertools import count
 
 
 import py
@@ -39,7 +38,11 @@ from _pytest.compat import (
     get_default_arg_names,
 )
 from _pytest.outcomes import fail
-from _pytest.mark.structures import transfer_markers, get_unpacked_marks
+from _pytest.mark.structures import (
+    transfer_markers,
+    get_unpacked_marks,
+    normalize_mark_list,
+)
 
 
 # relative paths that we use to filter traceback entries from appearing to the user;
@@ -69,13 +72,12 @@ def filter_traceback(entry):
     # entry.path might point to a non-existing file, in which case it will
     # also return a str object. see #1133
     p = py.path.local(entry.path)
-    return not p.relto(_pluggy_dir) and not p.relto(_pytest_dir) and not p.relto(
-        _py_dir
+    return (
+        not p.relto(_pluggy_dir) and not p.relto(_pytest_dir) and not p.relto(_py_dir)
     )
 
 
 def pyobj_property(name):
-
     def get(self):
         node = self.getparent(getattr(__import__("pytest"), name))
         if node is not None:
@@ -258,7 +260,6 @@ class PyobjMixin(PyobjContext):
         super(PyobjMixin, self).__init__(*k, **kw)
 
     def obj():
-
         def fget(self):
             obj = getattr(self, "_obj", None)
             if obj is None:
@@ -320,7 +321,6 @@ class PyobjMixin(PyobjContext):
 
 
 class PyCollector(PyobjMixin, nodes.Collector):
-
     def funcnamefilter(self, name):
         return self._matches_prefix_or_glob_option("python_functions", name)
 
@@ -487,9 +487,11 @@ class Module(nodes.File, PyCollector):
             exc_info = ExceptionInfo()
             if self.config.getoption("verbose") < 2:
                 exc_info.traceback = exc_info.traceback.filter(filter_traceback)
-            exc_repr = exc_info.getrepr(
-                style="short"
-            ) if exc_info.traceback else exc_info.exconly()
+            exc_repr = (
+                exc_info.getrepr(style="short")
+                if exc_info.traceback
+                else exc_info.exconly()
+            )
             formatted_tb = safe_str(exc_repr)
             raise self.CollectError(
                 "ImportError while importing test module '{fspath}'.\n"
@@ -673,7 +675,6 @@ class FunctionMixin(PyobjMixin):
 
 
 class Generator(FunctionMixin, PyCollector):
-
     def collect(self):
         # test generators are seen as collectors but they also
         # invoke setup/teardown on popular request
@@ -728,7 +729,6 @@ def hasnew(obj):
 
 
 class CallSpec2(object):
-
     def __init__(self, metafunc):
         self.metafunc = metafunc
         self.funcargs = {}
@@ -776,7 +776,7 @@ class CallSpec2(object):
             self.indices[arg] = param_index
             self._arg2scopenum[arg] = scopenum
         self._idlist.append(id)
-        self.marks.extend(marks)
+        self.marks.extend(normalize_mark_list(marks))
 
     def setall(self, funcargs, id, param):
         for x in funcargs:
@@ -864,46 +864,54 @@ class Metafunc(fixtures.FuncargnamesCompatAttr):
         """
         from _pytest.fixtures import scope2index
         from _pytest.mark import ParameterSet
-        from py.io import saferepr
 
         argnames, parameters = ParameterSet._for_parametrize(
             argnames, argvalues, self.function, self.config
         )
         del argvalues
-        default_arg_names = set(get_default_arg_names(self.function))
 
         if scope is None:
             scope = _find_parametrized_scope(argnames, self._arg2fixturedefs, indirect)
 
-        scopenum = scope2index(scope, descr="call to {}".format(self.parametrize))
-        valtypes = {}
-        for arg in argnames:
-            if arg not in self.fixturenames:
-                if arg in default_arg_names:
-                    raise ValueError(
-                        "%r already takes an argument %r with a default value"
-                        % (self.function, arg)
-                    )
-                else:
-                    if isinstance(indirect, (tuple, list)):
-                        name = "fixture" if arg in indirect else "argument"
-                    else:
-                        name = "fixture" if indirect else "argument"
-                    raise ValueError("%r uses no %s %r" % (self.function, name, arg))
+        self._validate_if_using_arg_names(argnames, indirect)
 
-        if indirect is True:
-            valtypes = dict.fromkeys(argnames, "params")
-        elif indirect is False:
-            valtypes = dict.fromkeys(argnames, "funcargs")
-        elif isinstance(indirect, (tuple, list)):
-            valtypes = dict.fromkeys(argnames, "funcargs")
-            for arg in indirect:
-                if arg not in argnames:
-                    raise ValueError(
-                        "indirect given to %r: fixture %r doesn't exist"
-                        % (self.function, arg)
-                    )
-                valtypes[arg] = "params"
+        arg_values_types = self._resolve_arg_value_types(argnames, indirect)
+
+        ids = self._resolve_arg_ids(argnames, ids, parameters)
+
+        scopenum = scope2index(scope, descr="call to {}".format(self.parametrize))
+
+        # create the new calls: if we are parametrize() multiple times (by applying the decorator
+        # more than once) then we accumulate those calls generating the cartesian product
+        # of all calls
+        newcalls = []
+        for callspec in self._calls or [CallSpec2(self)]:
+            for param_index, (param_id, param_set) in enumerate(zip(ids, parameters)):
+                newcallspec = callspec.copy()
+                newcallspec.setmulti2(
+                    arg_values_types,
+                    argnames,
+                    param_set.values,
+                    param_id,
+                    param_set.marks,
+                    scopenum,
+                    param_index,
+                )
+                newcalls.append(newcallspec)
+        self._calls = newcalls
+
+    def _resolve_arg_ids(self, argnames, ids, parameters):
+        """Resolves the actual ids for the given argnames, based on the ``ids`` parameter given
+        to ``parametrize``.
+
+        :param List[str] argnames: list of argument names passed to ``parametrize()``.
+        :param ids: the ids parameter of the parametrized call (see docs).
+        :param List[ParameterSet] parameters: the list of parameter values, same size as ``argnames``.
+        :rtype: List[str]
+        :return: the list of ids for each argname given
+        """
+        from py.io import saferepr
+
         idfn = None
         if callable(ids):
             idfn = ids
@@ -920,29 +928,57 @@ class Metafunc(fixtures.FuncargnamesCompatAttr):
                         msg % (saferepr(id_value), type(id_value).__name__)
                     )
         ids = idmaker(argnames, parameters, idfn, ids, self.config)
-        newcalls = []
-        for callspec in self._calls or [CallSpec2(self)]:
-            elements = zip(ids, parameters, count())
-            for a_id, param, param_index in elements:
-                if len(param.values) != len(argnames):
+        return ids
+
+    def _resolve_arg_value_types(self, argnames, indirect):
+        """Resolves if each parametrized argument must be considered a parameter to a fixture or a "funcarg"
+        to the function, based on the ``indirect`` parameter of the parametrized() call.
+
+        :param List[str] argnames: list of argument names passed to ``parametrize()``.
+        :param indirect: same ``indirect`` parameter of ``parametrize()``.
+        :rtype: Dict[str, str]
+            A dict mapping each arg name to either:
+            * "params" if the argname should be the parameter of a fixture of the same name.
+            * "funcargs" if the argname should be a parameter to the parametrized test function.
+        """
+        valtypes = {}
+        if indirect is True:
+            valtypes = dict.fromkeys(argnames, "params")
+        elif indirect is False:
+            valtypes = dict.fromkeys(argnames, "funcargs")
+        elif isinstance(indirect, (tuple, list)):
+            valtypes = dict.fromkeys(argnames, "funcargs")
+            for arg in indirect:
+                if arg not in argnames:
                     raise ValueError(
-                        'In "parametrize" the number of values ({}) must be '
-                        "equal to the number of names ({})".format(
-                            param.values, argnames
-                        )
+                        "indirect given to %r: fixture %r doesn't exist"
+                        % (self.function, arg)
                     )
-                newcallspec = callspec.copy()
-                newcallspec.setmulti2(
-                    valtypes,
-                    argnames,
-                    param.values,
-                    a_id,
-                    param.marks,
-                    scopenum,
-                    param_index,
-                )
-                newcalls.append(newcallspec)
-        self._calls = newcalls
+                valtypes[arg] = "params"
+        return valtypes
+
+    def _validate_if_using_arg_names(self, argnames, indirect):
+        """
+        Check if all argnames are being used, by default values, or directly/indirectly.
+
+        :param List[str] argnames: list of argument names passed to ``parametrize()``.
+        :param indirect: same ``indirect`` parameter of ``parametrize()``.
+        :raise ValueError: if validation fails.
+        """
+        default_arg_names = set(get_default_arg_names(self.function))
+        for arg in argnames:
+            if arg not in self.fixturenames:
+                if arg in default_arg_names:
+                    raise ValueError(
+                        "%r already takes an argument %r with a default value"
+                        % (self.function, arg)
+                    )
+                else:
+                    if isinstance(indirect, (tuple, list)):
+                        name = "fixture" if arg in indirect else "argument"
+                    else:
+                        name = "fixture" if indirect else "argument"
+                    raise ValueError("%r uses no %s %r" % (self.function, name, arg))
 
     def addcall(self, funcargs=None, id=NOTSET, param=NOTSET):
         """ Add a new call to the underlying test function during the collection phase of a test run.
@@ -1002,9 +1038,9 @@ def _find_parametrized_scope(argnames, arg2fixturedefs, indirect):
     from _pytest.fixtures import scopes
 
     indirect_as_list = isinstance(indirect, (list, tuple))
-    all_arguments_are_fixtures = indirect is True or indirect_as_list and len(
-        indirect
-    ) == argnames
+    all_arguments_are_fixtures = (
+        indirect is True or indirect_as_list and len(indirect) == argnames
+    )
     if all_arguments_are_fixtures:
         fixturedefs = arg2fixturedefs or {}
         used_scopes = [fixturedef[0].scope for name, fixturedef in fixturedefs.items()]
@@ -1026,8 +1062,9 @@ def _idval(val, argname, idx, idfn, config=None):
             # See issue https://github.com/pytest-dev/pytest/issues/2169
             import warnings
 
-            msg = "Raised while trying to determine id of parameter %s at position %d." % (
-                argname, idx
+            msg = (
+                "Raised while trying to determine id of parameter %s at position %d."
+                % (argname, idx)
             )
             msg += "\nUpdate your code as this will raise an error in pytest-4.0."
             warnings.warn(msg, DeprecationWarning)
@@ -1222,6 +1259,7 @@ class Function(FunctionMixin, nodes.Item, fixtures.FuncargnamesCompatAttr):
     """ a Function Item is responsible for setting up and executing a
     Python test function.
     """
+
     _genid = None
     # disable since functions handle it themselfes
     _ALLOW_MARKERS = False
@@ -1255,7 +1293,7 @@ class Function(FunctionMixin, nodes.Item, fixtures.FuncargnamesCompatAttr):
                 # feel free to cry, this was broken for years before
                 # and keywords cant fix it per design
                 self.keywords[mark.name] = mark
-            self.own_markers.extend(callspec.marks)
+            self.own_markers.extend(normalize_mark_list(callspec.marks))
         if keywords:
             self.keywords.update(keywords)
 

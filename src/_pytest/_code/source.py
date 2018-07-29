@@ -1,4 +1,4 @@
-from __future__ import absolute_import, division, generators, print_function
+from __future__ import absolute_import, division, print_function
 
 import ast
 from ast import PyCF_ONLY_AST as _AST_FLAG
@@ -17,6 +17,7 @@ class Source(object):
     """ an immutable object holding a source code fragment,
         possibly deindenting it.
     """
+
     _compilecounter = 0
 
     def __init__(self, *parts, **kwargs):
@@ -60,7 +61,7 @@ class Source(object):
             if key.step not in (None, 1):
                 raise IndexError("cannot slice a Source with a step")
             newsource = Source()
-            newsource.lines = self.lines[key.start:key.stop]
+            newsource.lines = self.lines[key.start : key.stop]
             return newsource
 
     def __len__(self):
@@ -151,12 +152,7 @@ class Source(object):
         return "\n".join(self.lines)
 
     def compile(
-        self,
-        filename=None,
-        mode="exec",
-        flag=generators.compiler_flag,
-        dont_inherit=0,
-        _genframe=None,
+        self, filename=None, mode="exec", flag=0, dont_inherit=0, _genframe=None
     ):
         """ return compiled code object. if filename is None
             invent an artificial filename which displays
@@ -178,7 +174,7 @@ class Source(object):
         except SyntaxError:
             ex = sys.exc_info()[1]
             # re-represent syntax errors from parsing python strings
-            msglines = self.lines[:ex.lineno]
+            msglines = self.lines[: ex.lineno]
             if ex.offset:
                 msglines.append(" " * ex.offset + "^")
             msglines.append("(code was compiled probably from here: %s)" % filename)
@@ -200,9 +196,7 @@ class Source(object):
 #
 
 
-def compile_(
-    source, filename=None, mode="exec", flags=generators.compiler_flag, dont_inherit=0
-):
+def compile_(source, filename=None, mode="exec", flags=0, dont_inherit=0):
     """ compile the given source to a raw code object,
         and maintain an internal cache which allows later
         retrieval of the source code for the code object
@@ -313,7 +307,7 @@ def deindent(lines, offset=None):
     except (IndentationError, tokenize.TokenError):
         pass
     # Add any lines we didn't see. E.g. if an exception was raised.
-    newlines.extend(lines[len(newlines):])
+    newlines.extend(lines[len(newlines) :])
     return newlines
 
 

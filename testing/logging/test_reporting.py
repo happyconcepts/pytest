@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 import re
 import os
+from io import open
 
 import six
 
@@ -520,16 +521,22 @@ def test_sections_single_new_line_after_test_outcome(testdir, request):
             "=* 1 passed in *=",
         ]
     )
-    assert re.search(
-        r"(.+)live log teardown(.+)\n(.+)WARNING(.+)\n(.+)WARNING(.+)",
-        result.stdout.str(),
-        re.MULTILINE,
-    ) is not None
-    assert re.search(
-        r"(.+)live log finish(.+)\n(.+)WARNING(.+)\n(.+)WARNING(.+)",
-        result.stdout.str(),
-        re.MULTILINE,
-    ) is not None
+    assert (
+        re.search(
+            r"(.+)live log teardown(.+)\n(.+)WARNING(.+)\n(.+)WARNING(.+)",
+            result.stdout.str(),
+            re.MULTILINE,
+        )
+        is not None
+    )
+    assert (
+        re.search(
+            r"(.+)live log finish(.+)\n(.+)WARNING(.+)\n(.+)WARNING(.+)",
+            result.stdout.str(),
+            re.MULTILINE,
+        )
+        is not None
+    )
 
 
 def test_log_cli_level(testdir):
@@ -821,6 +828,43 @@ def test_log_file_ini_level(testdir):
         assert "This log message won't be shown" not in contents
 
 
+def test_log_file_unicode(testdir):
+    log_file = testdir.tmpdir.join("pytest.log").strpath
+
+    testdir.makeini(
+        """
+        [pytest]
+        log_file={}
+        log_file_level = INFO
+        """.format(
+            log_file
+        )
+    )
+    testdir.makepyfile(
+        """
+        # -*- coding: utf-8 -*-
+        from __future__ import unicode_literals
+        import logging
+
+        def test_log_file():
+            logging.getLogger('catchlog').info("Normal message")
+            logging.getLogger('catchlog').info("├")
+            logging.getLogger('catchlog').info("Another normal message")
+    """
+    )
+
+    result = testdir.runpytest()
+
+    # make sure that that we get a '0' exit code for the testsuite
+    assert result.ret == 0
+    assert os.path.isfile(log_file)
+    with open(log_file, encoding="utf-8") as rfh:
+        contents = rfh.read()
+        assert "Normal message" in contents
+        assert u"├" in contents
+        assert "Another normal message" in contents
+
+
 @pytest.mark.parametrize("has_capture_manager", [True, False])
 def test_live_logging_suspends_capture(has_capture_manager, request):
     """Test that capture manager is suspended when we emitting messages for live logging.
@@ -850,7 +894,6 @@ def test_live_logging_suspends_capture(has_capture_manager, request):
     assert CaptureManager.resume_global_capture
 
     class DummyTerminal(six.StringIO):
-
         def section(self, *args, **kwargs):
             pass
 
@@ -865,10 +908,10 @@ def test_live_logging_suspends_capture(has_capture_manager, request):
 
     logger.critical("some message")
     if has_capture_manager:
-        assert (
-            MockCaptureManager.calls
-            == ["suspend_global_capture", "resume_global_capture"]
-        )
+        assert MockCaptureManager.calls == [
+            "suspend_global_capture",
+            "resume_global_capture",
+        ]
     else:
         assert MockCaptureManager.calls == []
     assert out_file.getvalue() == "\nsome message\n"

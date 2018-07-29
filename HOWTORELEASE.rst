@@ -10,10 +10,6 @@ taking a lot of time to make a new one.
     pytest releases must be prepared on **Linux** because the docs and examples expect
     to be executed in that platform.
 
-#. Install development dependencies in a virtual environment with::
-
-    pip3 install -U -r tasks/requirements.txt
-
 #. Create a branch ``release-X.Y.Z`` with the version for the release.
 
    * **patch releases**: from the latest ``master``;
@@ -22,9 +18,11 @@ taking a lot of time to make a new one.
 
    Ensure your are in a clean work tree.
 
-#. Generate docs, changelog, announcements and a **local** tag::
+#. Using ``tox``, generate docs, changelog, announcements::
 
-     invoke generate.pre-release <VERSION>
+    $ tox -e release -- <VERSION>
+
+   This will generate a commit with all the changes ready for pushing.
 
 #. Open a PR for this branch targeting ``master``.
 
