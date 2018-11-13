@@ -1,6 +1,7 @@
-from pytest import raises
+import six
+
 import _pytest._code
-import py
+from pytest import raises
 
 
 def otherfunc(a, b):
@@ -177,7 +178,7 @@ def test_dynamic_compile_shows_nicely():
     name = "abc-123"
     module = imp.new_module(name)
     code = _pytest._code.compile(src, name, "exec")
-    py.builtin.exec_(code, module.__dict__)
+    six.exec_(code, module.__dict__)
     sys.modules[name] = module
     module.foo()
 
@@ -247,7 +248,7 @@ class TestCustomAssertMsg(object):
         b = 2
         assert (
             A.a == b
-        ), "A.a appears not to be b\n" "or does not appear to be b\none of those"
+        ), "A.a appears not to be b\nor does not appear to be b\none of those"
 
     def test_custom_repr(self):
         class JSON(object):

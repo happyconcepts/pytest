@@ -153,7 +153,7 @@ This makes use of the automatic caching mechanisms of pytest.
 
 Another good approach is by adding the data files in the ``tests`` folder.
 There are also community plugins available to help managing this aspect of
-testing, e.g. `pytest-datadir <https://github.com/gabrielcnr/pytest-datadir>`__
+testing, e.g. `pytest-datadir <https://pypi.org/project/pytest-datadir/>`__
 and `pytest-datafiles <https://pypi.org/project/pytest-datafiles/>`__.
 
 .. _smtpshared:
@@ -171,6 +171,7 @@ to cause the decorated ``smtp_connection`` fixture function to only be invoked
 once per test *module* (the default is to invoke once per test *function*).
 Multiple test functions in a test module will thus
 each receive the same ``smtp_connection`` fixture instance, thus saving time.
+Possible values for ``scope`` are: ``function``, ``class``, ``module``, ``package`` or ``session``.
 
 The next example puts the fixture function into a separate ``conftest.py`` file
 so that tests from multiple test modules in the directory can
@@ -257,6 +258,27 @@ instance, you can simply declare it:
         ...
 
 Finally, the ``class`` scope will invoke the fixture once per test *class*.
+
+.. note::
+
+    Pytest will only cache one instance of a fixture at a time.
+    This means that when using a parametrized fixture, pytest may invoke a fixture more than once in the given scope.
+
+
+``package`` scope (experimental)
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. versionadded:: 3.7
+
+In pytest 3.7 the ``package`` scope has been introduced. Package-scoped fixtures
+are finalized when the last test of a *package* finishes.
+
+.. warning::
+    This functionality is considered **experimental** and may be removed in future
+    versions if hidden corner-cases or serious problems with this functionality
+    are discovered after it gets more usage in the wild.
+
+    Use this new feature sparingly and please make sure to report any issues you find.
 
 
 Higher-scoped fixtures are instantiated first
@@ -710,7 +732,7 @@ Running this test will *skip* the invocation of ``data_set`` with value ``2``::
 
     $ pytest test_fixture_marks.py -v
     =========================== test session starts ============================
-    platform linux -- Python 3.x.y, pytest-3.x.y, py-1.x.y, pluggy-0.x.y -- $PYTHON_PREFIX/bin/python3.5
+    platform linux -- Python 3.x.y, pytest-3.x.y, py-1.x.y, pluggy-0.x.y -- $PYTHON_PREFIX/bin/python3.6
     cachedir: .pytest_cache
     rootdir: $REGENDOC_TMPDIR, inifile:
     collecting ... collected 3 items
@@ -753,7 +775,7 @@ Here we declare an ``app`` fixture which receives the previously defined
 
     $ pytest -v test_appsetup.py
     =========================== test session starts ============================
-    platform linux -- Python 3.x.y, pytest-3.x.y, py-1.x.y, pluggy-0.x.y -- $PYTHON_PREFIX/bin/python3.5
+    platform linux -- Python 3.x.y, pytest-3.x.y, py-1.x.y, pluggy-0.x.y -- $PYTHON_PREFIX/bin/python3.6
     cachedir: .pytest_cache
     rootdir: $REGENDOC_TMPDIR, inifile:
     collecting ... collected 2 items
@@ -822,7 +844,7 @@ Let's run the tests in verbose mode and with looking at the print-output::
 
     $ pytest -v -s test_module.py
     =========================== test session starts ============================
-    platform linux -- Python 3.x.y, pytest-3.x.y, py-1.x.y, pluggy-0.x.y -- $PYTHON_PREFIX/bin/python3.5
+    platform linux -- Python 3.x.y, pytest-3.x.y, py-1.x.y, pluggy-0.x.y -- $PYTHON_PREFIX/bin/python3.6
     cachedir: .pytest_cache
     rootdir: $REGENDOC_TMPDIR, inifile:
     collecting ... collected 8 items

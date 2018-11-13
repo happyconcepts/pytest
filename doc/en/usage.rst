@@ -140,6 +140,49 @@ will be shown (because KeyboardInterrupt is caught by pytest). By using this
 option you make sure a trace is shown.
 
 
+.. _`pytest.detailed_failed_tests_usage`:
+
+Detailed summary report
+-----------------------
+
+.. versionadded:: 2.9
+
+The ``-r`` flag can be used to display test results summary at the end of the test session,
+making it easy in large test suites to get a clear picture of all failures, skips, xfails, etc.
+
+Example::
+
+    $ pytest -ra
+    =========================== test session starts ============================
+    platform linux -- Python 3.x.y, pytest-3.x.y, py-1.x.y, pluggy-0.x.y
+    rootdir: $REGENDOC_TMPDIR, inifile:
+    collected 0 items
+
+    ======================= no tests ran in 0.12 seconds =======================
+
+The ``-r`` options accepts a number of characters after it, with ``a`` used above meaning "all except passes".
+
+Here is the full list of available characters that can be used:
+
+ - ``f`` - failed
+ - ``E`` - error
+ - ``s`` - skipped
+ - ``x`` - xfailed
+ - ``X`` - xpassed
+ - ``p`` - passed
+ - ``P`` - passed with output
+ - ``a`` - all except ``pP``
+
+More than one character can be used, so for example to only see failed and skipped tests, you can execute::
+
+    $ pytest -rfs
+    =========================== test session starts ============================
+    platform linux -- Python 3.x.y, pytest-3.x.y, py-1.x.y, pluggy-0.x.y
+    rootdir: $REGENDOC_TMPDIR, inifile:
+    collected 0 items
+
+    ======================= no tests ran in 0.12 seconds =======================
+
 .. _pdb-option:
 
 Dropping to PDB_ (Python Debugger) on failures
@@ -171,6 +214,18 @@ for example::
     >>> sys.last_value
     AssertionError('assert result == "ok"',)
 
+.. _trace-option:
+
+Dropping to PDB_ (Python Debugger) at the start of a test
+----------------------------------------------------------
+
+
+``pytest`` allows one to drop into the PDB_ prompt immediately at the start of each test via a command line option::
+
+    pytest --trace
+
+This will invoke the Python debugger at the start of every test.
+
 .. _breakpoints:
 
 Setting breakpoints
@@ -200,8 +255,8 @@ Pytest supports the use of ``breakpoint()`` with the following behaviours:
 
  - When ``breakpoint()`` is called and ``PYTHONBREAKPOINT`` is set to the default value, pytest will use the custom internal PDB trace UI instead of the system default ``Pdb``.
  - When tests are complete, the system will default back to the system ``Pdb`` trace UI.
- - If ``--pdb`` is called on execution of pytest, the custom internal Pdb trace UI is used on ``bothbreakpoint()`` and failed tests/unhandled exceptions.
- - If ``--pdbcls`` is used, the custom class debugger will be executed when a test fails (as expected within existing behaviour), but also when ``breakpoint()`` is called from within a test, the custom class debugger will be instantiated.
+ - With ``--pdb`` passed to pytest, the custom internal Pdb trace UI is used with both ``breakpoint()`` and failed tests/unhandled exceptions.
+ - ``--pdbcls`` can be used to specify a custom debugger class.
 
 .. _durations:
 
@@ -214,6 +269,7 @@ To get a list of the slowest 10 test durations::
 
     pytest --durations=10
 
+By default, pytest will not show test durations that are too small (<0.01s) unless ``-vv`` is passed on the command-line.
 
 Creating JUnitXML format files
 ----------------------------------------------------

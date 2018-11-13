@@ -1,19 +1,22 @@
 """ core implementation of testing process: init, session, runtest loop. """
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 import contextlib
 import functools
 import os
 import pkgutil
-import six
 import sys
 
-import _pytest
-from _pytest import nodes
-import _pytest._code
 import py
+import six
 
-from _pytest.config import directory_arg, UsageError, hookimpl
+import _pytest._code
+from _pytest import nodes
+from _pytest.config import directory_arg
+from _pytest.config import hookimpl
+from _pytest.config import UsageError
 from _pytest.outcomes import exit
 from _pytest.runner import collect_one_node
 
@@ -156,7 +159,10 @@ def pytest_addoption(parser):
         dest="basetemp",
         default=None,
         metavar="dir",
-        help="base temporary directory for this test run.",
+        help=(
+            "base temporary directory for this test run."
+            "(warning: this directory is removed if it exists)"
+        ),
     )
 
 
@@ -182,10 +188,13 @@ def wrap_session(config, doit):
             session.exitstatus = EXIT_TESTSFAILED
         except KeyboardInterrupt:
             excinfo = _pytest._code.ExceptionInfo()
-            if initstate < 2 and isinstance(excinfo.value, exit.Exception):
+            exitstatus = EXIT_INTERRUPTED
+            if initstate <= 2 and isinstance(excinfo.value, exit.Exception):
                 sys.stderr.write("{}: {}\n".format(excinfo.typename, excinfo.value.msg))
+                if excinfo.value.returncode is not None:
+                    exitstatus = excinfo.value.returncode
             config.hook.pytest_keyboard_interrupt(excinfo=excinfo)
-            session.exitstatus = EXIT_INTERRUPTED
+            session.exitstatus = exitstatus
         except:  # noqa
             excinfo = _pytest._code.ExceptionInfo()
             config.notify_exception(excinfo, config.option)
@@ -269,17 +278,8 @@ def pytest_ignore_collect(path, config):
         return True
 
     allow_in_venv = config.getoption("collect_in_virtualenv")
-    if _in_venv(path) and not allow_in_venv:
+    if not allow_in_venv and _in_venv(path):
         return True
-
-    # Skip duplicate paths.
-    keepduplicates = config.getoption("keepduplicates")
-    duplicate_paths = config.pluginmanager._duplicatepaths
-    if not keepduplicates:
-        if path in duplicate_paths:
-            return True
-        else:
-            duplicate_paths.add(path)
 
     return False
 
@@ -383,6 +383,11 @@ class Session(nodes.FSCollector):
         self.trace = config.trace.root.get("collection")
         self._norecursepatterns = config.getini("norecursedirs")
         self.startdir = py.path.local()
+        self._initialpaths = frozenset()
+        # Keep track of any collected nodes in here, so we don't duplicate fixtures
+        self._node_cache = {}
+        # Dirnames of pkgs with dunder-init files.
+        self._pkg_roots = {}
 
         self.config.pluginmanager.register(self, name="session")
 
@@ -439,13 +444,14 @@ class Session(nodes.FSCollector):
         self.trace("perform_collect", self, args)
         self.trace.root.indent += 1
         self._notfound = []
-        self._initialpaths = set()
+        initialpaths = []
         self._initialparts = []
         self.items = items = []
         for arg in args:
             parts = self._parsearg(arg)
             self._initialparts.append(parts)
-            self._initialpaths.add(parts[0])
+            initialpaths.append(parts[0])
+        self._initialpaths = frozenset(initialpaths)
         rep = collect_one_node(self)
         self.ihook.pytest_collectreport(report=rep)
         self.trace.root.indent -= 1
@@ -465,8 +471,8 @@ class Session(nodes.FSCollector):
             return items
 
     def collect(self):
-        for parts in self._initialparts:
-            arg = "::".join(map(str, parts))
+        for initialpart in self._initialparts:
+            arg = "::".join(map(str, initialpart))
             self.trace("processing argument", arg)
             self.trace.root.indent += 1
             try:
@@ -480,43 +486,124 @@ class Session(nodes.FSCollector):
             self.trace.root.indent -= 1
 
     def _collect(self, arg):
-        names = self._parsearg(arg)
-        path = names.pop(0)
-        if path.check(dir=1):
-            assert not names, "invalid arg %r" % (arg,)
-            for path in path.visit(
-                fil=lambda x: x.check(file=1), rec=self._recurse, bf=True, sort=True
-            ):
-                for x in self._collectfile(path):
-                    yield x
-        else:
-            assert path.check(file=1)
-            for x in self.matchnodes(self._collectfile(path), names):
-                yield x
+        from _pytest.python import Package
 
-    def _collectfile(self, path):
+        names = self._parsearg(arg)
+        argpath = names.pop(0)
+
+        # Start with a Session root, and delve to argpath item (dir or file)
+        # and stack all Packages found on the way.
+        # No point in finding packages when collecting doctests
+        if not self.config.option.doctestmodules:
+            pm = self.config.pluginmanager
+            for parent in reversed(argpath.parts()):
+                if pm._confcutdir and pm._confcutdir.relto(parent):
+                    break
+
+                if parent.isdir():
+                    pkginit = parent.join("__init__.py")
+                    if pkginit.isfile():
+                        if pkginit not in self._node_cache:
+                            col = self._collectfile(pkginit, handle_dupes=False)
+                            if col:
+                                if isinstance(col[0], Package):
+                                    self._pkg_roots[parent] = col[0]
+                                # always store a list in the cache, matchnodes expects it
+                                self._node_cache[col[0].fspath] = [col[0]]
+
+        # If it's a directory argument, recurse and look for any Subpackages.
+        # Let the Package collector deal with subnodes, don't collect here.
+        if argpath.check(dir=1):
+            assert not names, "invalid arg %r" % (arg,)
+
+            if six.PY2:
+
+                def filter_(f):
+                    return f.check(file=1) and not f.strpath.endswith("*.pyc")
+
+            else:
+
+                def filter_(f):
+                    return f.check(file=1)
+
+            seen_dirs = set()
+            for path in argpath.visit(
+                fil=filter_, rec=self._recurse, bf=True, sort=True
+            ):
+                dirpath = path.dirpath()
+                if dirpath not in seen_dirs:
+                    # Collect packages first.
+                    seen_dirs.add(dirpath)
+                    pkginit = dirpath.join("__init__.py")
+                    if pkginit.exists():
+                        for x in self._collectfile(pkginit):
+                            yield x
+                            if isinstance(x, Package):
+                                self._pkg_roots[dirpath] = x
+                if dirpath in self._pkg_roots:
+                    # Do not collect packages here.
+                    continue
+
+                for x in self._collectfile(path):
+                    key = (type(x), x.fspath)
+                    if key in self._node_cache:
+                        yield self._node_cache[key]
+                    else:
+                        self._node_cache[key] = x
+                        yield x
+        else:
+            assert argpath.check(file=1)
+
+            if argpath in self._node_cache:
+                col = self._node_cache[argpath]
+            else:
+                collect_root = self._pkg_roots.get(argpath.dirname, self)
+                col = collect_root._collectfile(argpath)
+                if col:
+                    self._node_cache[argpath] = col
+            m = self.matchnodes(col, names)
+            # If __init__.py was the only file requested, then the matched node will be
+            # the corresponding Package, and the first yielded item will be the __init__
+            # Module itself, so just use that. If this special case isn't taken, then all
+            # the files in the package will be yielded.
+            if argpath.basename == "__init__.py":
+                yield next(m[0].collect())
+                return
+            for y in m:
+                yield y
+
+    def _collectfile(self, path, handle_dupes=True):
         ihook = self.gethookproxy(path)
         if not self.isinitpath(path):
             if ihook.pytest_ignore_collect(path=path, config=self.config):
                 return ()
+
+        if handle_dupes:
+            keepduplicates = self.config.getoption("keepduplicates")
+            if not keepduplicates:
+                duplicate_paths = self.config.pluginmanager._duplicatepaths
+                if path in duplicate_paths:
+                    return ()
+                else:
+                    duplicate_paths.add(path)
+
         return ihook.pytest_collect_file(path=path, parent=self)
 
-    def _recurse(self, path):
-        ihook = self.gethookproxy(path.dirpath())
-        if ihook.pytest_ignore_collect(path=path, config=self.config):
-            return
+    def _recurse(self, dirpath):
+        if dirpath.basename == "__pycache__":
+            return False
+        ihook = self.gethookproxy(dirpath.dirpath())
+        if ihook.pytest_ignore_collect(path=dirpath, config=self.config):
+            return False
         for pat in self._norecursepatterns:
-            if path.check(fnmatch=pat):
+            if dirpath.check(fnmatch=pat):
                 return False
-        ihook = self.gethookproxy(path)
-        ihook.pytest_collect_directory(path=path, parent=self)
+        ihook = self.gethookproxy(dirpath)
+        ihook.pytest_collect_directory(path=dirpath, parent=self)
         return True
 
     def _tryconvertpyarg(self, x):
-        """Convert a dotted module name to path.
-
-        """
-
+        """Convert a dotted module name to path."""
         try:
             with _patched_find_module():
                 loader = pkgutil.find_loader(x)
@@ -548,9 +635,8 @@ class Session(nodes.FSCollector):
                 raise UsageError(
                     "file or package not found: " + arg + " (missing __init__.py?)"
                 )
-            else:
-                raise UsageError("file not found: " + arg)
-        parts[0] = path
+            raise UsageError("file not found: " + arg)
+        parts[0] = path.realpath()
         return parts
 
     def matchnodes(self, matching, names):
@@ -577,7 +663,12 @@ class Session(nodes.FSCollector):
                     resultnodes.append(node)
                 continue
             assert isinstance(node, nodes.Collector)
-            rep = collect_one_node(node)
+            key = (type(node), node.nodeid)
+            if key in self._node_cache:
+                rep = self._node_cache[key]
+            else:
+                rep = collect_one_node(node)
+                self._node_cache[key] = rep
             if rep.passed:
                 has_matched = False
                 for x in rep.result:

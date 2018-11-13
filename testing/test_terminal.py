@@ -1,17 +1,25 @@
 """
 terminal reporting of the full testing process.
 """
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import collections
+import os
 import sys
+import textwrap
 
 import pluggy
-import _pytest._code
 import py
+
 import pytest
 from _pytest.main import EXIT_NOTESTSCOLLECTED
-from _pytest.terminal import TerminalReporter, repr_pythonversion, getreportopt
-from _pytest.terminal import build_summary_stats_line, _plugin_nameversions
+from _pytest.terminal import _plugin_nameversions
+from _pytest.terminal import build_summary_stats_line
+from _pytest.terminal import getreportopt
+from _pytest.terminal import repr_pythonversion
+from _pytest.terminal import TerminalReporter
 
 
 DistInfo = collections.namedtuple("DistInfo", ["project_name", "version"])
@@ -153,7 +161,7 @@ class TestTerminal(object):
         )
         result = testdir.runpytest(p2)
         result.stdout.fnmatch_lines(["*test_p2.py .*", "*1 passed*"])
-        result = testdir.runpytest("-v", p2)
+        result = testdir.runpytest("-vv", p2)
         result.stdout.fnmatch_lines(
             ["*test_p2.py::TestMore::test_p1* <- *test_p1.py*PASSED*"]
         )
@@ -161,15 +169,15 @@ class TestTerminal(object):
     def test_itemreport_directclasses_not_shown_as_subclasses(self, testdir):
         a = testdir.mkpydir("a123")
         a.join("test_hello123.py").write(
-            _pytest._code.Source(
+            textwrap.dedent(
+                """\
+                class TestClass(object):
+                    def test_method(self):
+                        pass
                 """
-            class TestClass(object):
-                def test_method(self):
-                    pass
-        """
             )
         )
-        result = testdir.runpytest("-v")
+        result = testdir.runpytest("-vv")
         assert result.ret == 0
         result.stdout.fnmatch_lines(["*a123/test_hello123.py*PASS*"])
         assert " <- " not in result.stdout.str()
@@ -312,13 +320,13 @@ class TestCollectonly(object):
         result = testdir.runpytest("--collect-only", p)
         assert result.ret == 2
         result.stdout.fnmatch_lines(
-            _pytest._code.Source(
+            textwrap.dedent(
+                """\
+                *ERROR*
+                *ImportError*
+                *No module named *Errlk*
+                *1 error*
                 """
-            *ERROR*
-            *ImportError*
-            *No module named *Errlk*
-            *1 error*
-        """
             ).strip()
         )
 
@@ -472,7 +480,7 @@ class TestTerminalFunctional(object):
 
     def test_show_deselected_items_using_markexpr_before_test_execution(self, testdir):
         testdir.makepyfile(
-            """
+            test_show_deselected="""
             import pytest
 
             @pytest.mark.foo
@@ -491,7 +499,7 @@ class TestTerminalFunctional(object):
         result.stdout.fnmatch_lines(
             [
                 "collected 3 items / 1 deselected",
-                "*test_show_des*.py ..*",
+                "*test_show_deselected.py ..*",
                 "*= 2 passed, 1 deselected in * =*",
             ]
         )
@@ -680,14 +688,22 @@ def test_pass_reporting_on_fail(testdir):
 def test_pass_output_reporting(testdir):
     testdir.makepyfile(
         """
-        def test_pass_output():
+        def test_pass_has_output():
             print("Four score and seven years ago...")
+        def test_pass_no_output():
+            pass
     """
     )
     result = testdir.runpytest()
-    assert "Four score and seven years ago..." not in result.stdout.str()
+    s = result.stdout.str()
+    assert "test_pass_has_output" not in s
+    assert "Four score and seven years ago..." not in s
+    assert "test_pass_no_output" not in s
     result = testdir.runpytest("-rP")
-    result.stdout.fnmatch_lines(["Four score and seven years ago..."])
+    result.stdout.fnmatch_lines(
+        ["*test_pass_has_output*", "Four score and seven years ago..."]
+    )
+    assert "test_pass_no_output" not in result.stdout.str()
 
 
 def test_color_yes(testdir):
@@ -948,6 +964,46 @@ def pytest_report_header(config, startdir):
         assert "!This is stderr!" not in stdout
         assert "!This is a warning log msg!" not in stdout
 
+    def test_show_capture_with_teardown_logs(self, testdir):
+        """Ensure that the capturing of teardown logs honor --show-capture setting"""
+        testdir.makepyfile(
+            """
+            import logging
+            import sys
+            import pytest
+
+            @pytest.fixture(scope="function", autouse="True")
+            def hook_each_test(request):
+                yield
+                sys.stdout.write("!stdout!")
+                sys.stderr.write("!stderr!")
+                logging.warning("!log!")
+
+            def test_func():
+                assert False
+        """
+        )
+
+        result = testdir.runpytest("--show-capture=stdout", "--tb=short").stdout.str()
+        assert "!stdout!" in result
+        assert "!stderr!" not in result
+        assert "!log!" not in result
+
+        result = testdir.runpytest("--show-capture=stderr", "--tb=short").stdout.str()
+        assert "!stdout!" not in result
+        assert "!stderr!" in result
+        assert "!log!" not in result
+
+        result = testdir.runpytest("--show-capture=log", "--tb=short").stdout.str()
+        assert "!stdout!" not in result
+        assert "!stderr!" not in result
+        assert "!log!" in result
+
+        result = testdir.runpytest("--show-capture=no", "--tb=short").stdout.str()
+        assert "!stdout!" not in result
+        assert "!stderr!" not in result
+        assert "!log!" not in result
+
 
 @pytest.mark.xfail("not hasattr(os, 'dup')")
 def test_fdopen_kept_alive_issue124(testdir):
@@ -1006,20 +1062,21 @@ def test_terminal_summary(testdir):
     )
 
 
+@pytest.mark.filterwarnings("default")
 def test_terminal_summary_warnings_are_displayed(testdir):
     """Test that warnings emitted during pytest_terminal_summary are displayed.
     (#1305).
     """
     testdir.makeconftest(
         """
+        import warnings
         def pytest_terminal_summary(terminalreporter):
-            config = terminalreporter.config
-            config.warn('C1', 'internal warning')
+            warnings.warn(UserWarning('internal warning'))
     """
     )
-    result = testdir.runpytest("-rw")
+    result = testdir.runpytest()
     result.stdout.fnmatch_lines(
-        ["<undetermined location>", "*internal warning", "*== 1 warnings in *"]
+        ["*conftest.py:3:*internal warning", "*== 1 warnings in *"]
     )
     assert "None" not in result.stdout.str()
 
@@ -1078,9 +1135,9 @@ def test_terminal_summary_warnings_are_displayed(testdir):
 )
 def test_summary_stats(exp_line, exp_color, stats_arg):
     print("Based on stats: %s" % stats_arg)
-    print('Expect summary: "%s"; with color "%s"' % (exp_line, exp_color))
+    print('Expect summary: "{}"; with color "{}"'.format(exp_line, exp_color))
     (line, color) = build_summary_stats_line(stats_arg)
-    print('Actually got:   "%s"; with color "%s"' % (line, color))
+    print('Actually got:   "{}"; with color "{}"'.format(line, color))
     assert line == exp_line
     assert color == exp_color
 
@@ -1094,7 +1151,53 @@ def test_no_trailing_whitespace_after_inifile_word(testdir):
     assert "inifile: tox.ini\n" in result.stdout.str()
 
 
-class TestProgress(object):
+class TestClassicOutputStyle(object):
+    """Ensure classic output style works as expected (#3883)"""
+
+    @pytest.fixture
+    def test_files(self, testdir):
+        testdir.makepyfile(
+            **{
+                "test_one.py": "def test_one(): pass",
+                "test_two.py": "def test_two(): assert 0",
+                "sub/test_three.py": """
+                    def test_three_1(): pass
+                    def test_three_2(): assert 0
+                    def test_three_3(): pass
+                """,
+            }
+        )
+
+    def test_normal_verbosity(self, testdir, test_files):
+        result = testdir.runpytest("-o", "console_output_style=classic")
+        result.stdout.fnmatch_lines(
+            [
+                "test_one.py .",
+                "test_two.py F",
+                "sub{}test_three.py .F.".format(os.sep),
+                "*2 failed, 3 passed in*",
+            ]
+        )
+
+    def test_verbose(self, testdir, test_files):
+        result = testdir.runpytest("-o", "console_output_style=classic", "-v")
+        result.stdout.fnmatch_lines(
+            [
+                "test_one.py::test_one PASSED",
+                "test_two.py::test_two FAILED",
+                "sub{}test_three.py::test_three_1 PASSED".format(os.sep),
+                "sub{}test_three.py::test_three_2 FAILED".format(os.sep),
+                "sub{}test_three.py::test_three_3 PASSED".format(os.sep),
+                "*2 failed, 3 passed in*",
+            ]
+        )
+
+    def test_quiet(self, testdir, test_files):
+        result = testdir.runpytest("-o", "console_output_style=classic", "-q")
+        result.stdout.fnmatch_lines([".F.F.", "*2 failed, 3 passed in*"])
+
+
+class TestProgressOutputStyle(object):
     @pytest.fixture
     def many_tests_files(self, testdir):
         testdir.makepyfile(
@@ -1143,6 +1246,22 @@ class TestProgress(object):
             ]
         )
 
+    def test_count(self, many_tests_files, testdir):
+        testdir.makeini(
+            """
+            [pytest]
+            console_output_style = count
+        """
+        )
+        output = testdir.runpytest()
+        output.stdout.re_match_lines(
+            [
+                r"test_bar.py \.{10} \s+ \[10/20\]",
+                r"test_foo.py \.{5} \s+ \[15/20\]",
+                r"test_foobar.py \.{5} \s+ \[20/20\]",
+            ]
+        )
+
     def test_verbose(self, many_tests_files, testdir):
         output = testdir.runpytest("-v")
         output.stdout.re_match_lines(
@@ -1153,10 +1272,37 @@ class TestProgress(object):
             ]
         )
 
+    def test_verbose_count(self, many_tests_files, testdir):
+        testdir.makeini(
+            """
+            [pytest]
+            console_output_style = count
+        """
+        )
+        output = testdir.runpytest("-v")
+        output.stdout.re_match_lines(
+            [
+                r"test_bar.py::test_bar\[0\] PASSED \s+ \[ 1/20\]",
+                r"test_foo.py::test_foo\[4\] PASSED \s+ \[15/20\]",
+                r"test_foobar.py::test_foobar\[4\] PASSED \s+ \[20/20\]",
+            ]
+        )
+
     def test_xdist_normal(self, many_tests_files, testdir):
         pytest.importorskip("xdist")
         output = testdir.runpytest("-n2")
         output.stdout.re_match_lines([r"\.{20} \s+ \[100%\]"])
+
+    def test_xdist_normal_count(self, many_tests_files, testdir):
+        pytest.importorskip("xdist")
+        testdir.makeini(
+            """
+            [pytest]
+            console_output_style = count
+        """
+        )
+        output = testdir.runpytest("-n2")
+        output.stdout.re_match_lines([r"\.{20} \s+ \[20/20\]"])
 
     def test_xdist_verbose(self, many_tests_files, testdir):
         pytest.importorskip("xdist")

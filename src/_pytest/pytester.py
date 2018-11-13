@@ -1,5 +1,7 @@
 """(disabled by default) support for testing pytest and pytest plugins."""
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 import codecs
 import gc
@@ -7,21 +9,25 @@ import os
 import platform
 import re
 import subprocess
-import six
 import sys
 import time
 import traceback
 from fnmatch import fnmatch
-
 from weakref import WeakKeyDictionary
 
-from _pytest.capture import MultiCapture, SysCapture
-from _pytest._code import Source
 import py
-import pytest
-from _pytest.main import Session, EXIT_OK
-from _pytest.assertion.rewrite import AssertionRewritingHook
+import six
 
+import pytest
+from _pytest._code import Source
+from _pytest.assertion.rewrite import AssertionRewritingHook
+from _pytest.capture import MultiCapture
+from _pytest.capture import SysCapture
+from _pytest.compat import safe_str
+from _pytest.main import EXIT_INTERRUPTED
+from _pytest.main import EXIT_OK
+from _pytest.main import Session
+from _pytest.pathlib import Path
 
 IGNORE_PAM = [  # filenames added when obtaining details about the current user
     u"/var/lib/sss/mc/passwd"
@@ -34,7 +40,7 @@ def pytest_addoption(parser):
         action="store_true",
         dest="lsof",
         default=False,
-        help=("run FD checks if lsof is available"),
+        help="run FD checks if lsof is available",
     )
 
     parser.addoption(
@@ -48,12 +54,21 @@ def pytest_addoption(parser):
         ),
     )
 
+    parser.addini(
+        "pytester_example_dir", help="directory to take the pytester example files from"
+    )
+
 
 def pytest_configure(config):
     if config.getvalue("lsof"):
         checker = LsofFdLeakChecker()
         if checker.matching_platform():
             config.pluginmanager.register(checker)
+
+
+def raise_on_kwargs(kwargs):
+    if kwargs:
+        raise TypeError("Unexpected arguments: {}".format(", ".join(sorted(kwargs))))
 
 
 class LsofFdLeakChecker(object):
@@ -121,7 +136,7 @@ class LsofFdLeakChecker(object):
             error.append(error[0])
             error.append("*** function %s:%s: %s " % item.location)
             error.append("See issue #2366")
-            item.warn("", "\n".join(error))
+            item.warn(pytest.PytestWarning("\n".join(error)))
 
 
 # XXX copied from execnet's conftest.py - needs to be merged
@@ -269,7 +284,7 @@ class HookRecorder(object):
                 del self.calls[i]
                 return call
         lines = ["could not find call %r, in:" % (name,)]
-        lines.extend(["  %s" % str(x) for x in self.calls])
+        lines.extend(["  %s" % x for x in self.calls])
         pytest.fail("\n".join(lines))
 
     def getcall(self, name):
@@ -402,7 +417,9 @@ class RunResult(object):
                     return d
         raise ValueError("Pytest terminal report not found")
 
-    def assert_outcomes(self, passed=0, skipped=0, failed=0, error=0):
+    def assert_outcomes(
+        self, passed=0, skipped=0, failed=0, error=0, xpassed=0, xfailed=0
+    ):
         """Assert that the specified outcomes appear with the respective
         numbers (0 means it didn't occur) in the text output from a test run.
 
@@ -413,10 +430,18 @@ class RunResult(object):
             "skipped": d.get("skipped", 0),
             "failed": d.get("failed", 0),
             "error": d.get("error", 0),
+            "xpassed": d.get("xpassed", 0),
+            "xfailed": d.get("xfailed", 0),
         }
-        assert obtained == dict(
-            passed=passed, skipped=skipped, failed=failed, error=error
-        )
+        expected = {
+            "passed": passed,
+            "skipped": skipped,
+            "failed": failed,
+            "error": error,
+            "xpassed": xpassed,
+            "xfailed": xfailed,
+        }
+        assert obtained == expected
 
 
 class CwdSnapshot(object):
@@ -467,11 +492,16 @@ class Testdir(object):
 
     """
 
+    class TimeoutExpired(Exception):
+        pass
+
     def __init__(self, request, tmpdir_factory):
         self.request = request
         self._mod_collections = WeakKeyDictionary()
         name = request.function.__name__
         self.tmpdir = tmpdir_factory.mktemp(name, numbered=True)
+        self.test_tmproot = tmpdir_factory.mktemp("tmp-" + name, numbered=True)
+        os.environ["PYTEST_DEBUG_TEMPROOT"] = str(self.test_tmproot)
         self.plugins = []
         self._cwd_snapshot = CwdSnapshot()
         self._sys_path_snapshot = SysPathsSnapshot()
@@ -498,6 +528,7 @@ class Testdir(object):
         self._sys_modules_snapshot.restore()
         self._sys_path_snapshot.restore()
         self._cwd_snapshot.restore()
+        os.environ.pop("PYTEST_DEBUG_TEMPROOT", None)
 
     def __take_sys_modules_snapshot(self):
         # some zope modules used by twisted-related tests keep internal state
@@ -510,7 +541,6 @@ class Testdir(object):
 
     def make_hook_recorder(self, pluginmanager):
         """Create a new :py:class:`HookRecorder` for a PluginManager."""
-        assert not hasattr(pluginmanager, "reprec")
         pluginmanager.reprec = reprec = HookRecorder(pluginmanager)
         self.request.addfinalizer(reprec.finish_recording)
         return reprec
@@ -546,18 +576,22 @@ class Testdir(object):
         return ret
 
     def makefile(self, ext, *args, **kwargs):
-        """Create a new file in the testdir.
+        r"""Create new file(s) in the testdir.
 
-        ext: The extension the file should use, including the dot, e.g. `.py`.
-
-        args: All args will be treated as strings and joined using newlines.
+        :param str ext: The extension the file(s) should use, including the dot, e.g. `.py`.
+        :param list[str] args: All args will be treated as strings and joined using newlines.
            The result will be written as contents to the file.  The name of the
            file will be based on the test function requesting this fixture.
-           E.g. "testdir.makefile('.txt', 'line1', 'line2')"
-
-        kwargs: Each keyword is the name of a file, while the value of it will
+        :param kwargs: Each keyword is the name of a file, while the value of it will
            be written as contents of the file.
-           E.g. "testdir.makefile('.ini', pytest='[pytest]\naddopts=-rs\n')"
+
+        Examples:
+
+        .. code-block:: python
+
+            testdir.makefile(".txt", "line1", "line2")
+
+            testdir.makefile(".ini", pytest="[pytest]\naddopts=-rs\n")
 
         """
         return self._makefile(ext, args, kwargs)
@@ -622,6 +656,50 @@ class Testdir(object):
         p = self.mkdir(name)
         p.ensure("__init__.py")
         return p
+
+    def copy_example(self, name=None):
+        import warnings
+        from _pytest.warning_types import PYTESTER_COPY_EXAMPLE
+
+        warnings.warn(PYTESTER_COPY_EXAMPLE, stacklevel=2)
+        example_dir = self.request.config.getini("pytester_example_dir")
+        if example_dir is None:
+            raise ValueError("pytester_example_dir is unset, can't copy examples")
+        example_dir = self.request.config.rootdir.join(example_dir)
+
+        for extra_element in self.request.node.iter_markers("pytester_example_path"):
+            assert extra_element.args
+            example_dir = example_dir.join(*extra_element.args)
+
+        if name is None:
+            func_name = self.request.function.__name__
+            maybe_dir = example_dir / func_name
+            maybe_file = example_dir / (func_name + ".py")
+
+            if maybe_dir.isdir():
+                example_path = maybe_dir
+            elif maybe_file.isfile():
+                example_path = maybe_file
+            else:
+                raise LookupError(
+                    "{} cant be found as module or package in {}".format(
+                        func_name, example_dir.bestrelpath(self.request.confg.rootdir)
+                    )
+                )
+        else:
+            example_path = example_dir.join(name)
+
+        if example_path.isdir() and not example_path.join("__init__.py").isfile():
+            example_path.copy(self.tmpdir)
+            return self.tmpdir
+        elif example_path.isfile():
+            result = self.tmpdir.join(example_path.basename)
+            example_path.copy(result)
+            return result
+        else:
+            raise LookupError(
+                'example "{}" is not found as a file or directory'.format(example_path)
+            )
 
     Session = Session
 
@@ -783,7 +861,7 @@ class Testdir(object):
 
             # typically we reraise keyboard interrupts from the child run
             # because it's our user requesting interruption of the testing
-            if ret == 2 and not kwargs.get("no_reraise_ctrlc"):
+            if ret == EXIT_INTERRUPTED and not kwargs.get("no_reraise_ctrlc"):
                 calls = reprec.getcalls("pytest_keyboard_interrupt")
                 if calls and calls[-1].excinfo.type == KeyboardInterrupt:
                     raise KeyboardInterrupt()
@@ -835,14 +913,12 @@ class Testdir(object):
         return self._runpytest_method(*args, **kwargs)
 
     def _ensure_basetemp(self, args):
-        args = [str(x) for x in args]
+        args = list(args)
         for x in args:
-            if str(x).startswith("--basetemp"):
-                # print("basedtemp exists: %s" %(args,))
+            if safe_str(x).startswith("--basetemp"):
                 break
         else:
             args.append("--basetemp=%s" % self.tmpdir.dirpath("basetemp"))
-            # print("added basetemp: %s" %(args,))
         return args
 
     def parseconfig(self, *args):
@@ -929,14 +1005,16 @@ class Testdir(object):
             same directory to ensure it is a package
 
         """
-        kw = {self.request.function.__name__: Source(source).strip()}
-        path = self.makepyfile(**kw)
+        if isinstance(source, Path):
+            path = self.tmpdir.join(str(source))
+            assert not withinit, "not supported for paths"
+        else:
+            kw = {self.request.function.__name__: Source(source).strip()}
+            path = self.makepyfile(**kw)
         if withinit:
             self.makepyfile(__init__="#")
         self.config = config = self.parseconfigure(path, *configargs)
-        node = self.getnode(config, path)
-
-        return node
+        return self.getnode(config, path)
 
     def collect_by_name(self, modcol, name):
         """Return the collection node for name from the module collection.
@@ -966,7 +1044,7 @@ class Testdir(object):
         """
         env = os.environ.copy()
         env["PYTHONPATH"] = os.pathsep.join(
-            filter(None, [str(os.getcwd()), env.get("PYTHONPATH", "")])
+            filter(None, [os.getcwd(), env.get("PYTHONPATH", "")])
         )
         kw["env"] = env
 
@@ -977,22 +1055,30 @@ class Testdir(object):
 
         return popen
 
-    def run(self, *cmdargs):
+    def run(self, *cmdargs, **kwargs):
         """Run a command with arguments.
 
         Run a process using subprocess.Popen saving the stdout and stderr.
 
+        :param args: the sequence of arguments to pass to `subprocess.Popen()`
+        :param timeout: the period in seconds after which to timeout and raise
+            :py:class:`Testdir.TimeoutExpired`
+
         Returns a :py:class:`RunResult`.
 
         """
-        return self._run(*cmdargs)
+        __tracebackhide__ = True
 
-    def _run(self, *cmdargs):
-        cmdargs = [str(x) for x in cmdargs]
+        timeout = kwargs.pop("timeout", None)
+        raise_on_kwargs(kwargs)
+
+        cmdargs = [
+            str(arg) if isinstance(arg, py.path.local) else arg for arg in cmdargs
+        ]
         p1 = self.tmpdir.join("stdout")
         p2 = self.tmpdir.join("stderr")
-        print("running:", " ".join(cmdargs))
-        print("     in:", str(py.path.local()))
+        print("running:", *cmdargs)
+        print("     in:", py.path.local())
         f1 = codecs.open(str(p1), "w", encoding="utf8")
         f2 = codecs.open(str(p2), "w", encoding="utf8")
         try:
@@ -1000,7 +1086,40 @@ class Testdir(object):
             popen = self.popen(
                 cmdargs, stdout=f1, stderr=f2, close_fds=(sys.platform != "win32")
             )
-            ret = popen.wait()
+
+            def handle_timeout():
+                __tracebackhide__ = True
+
+                timeout_message = (
+                    "{seconds} second timeout expired running:"
+                    " {command}".format(seconds=timeout, command=cmdargs)
+                )
+
+                popen.kill()
+                popen.wait()
+                raise self.TimeoutExpired(timeout_message)
+
+            if timeout is None:
+                ret = popen.wait()
+            elif six.PY3:
+                try:
+                    ret = popen.wait(timeout)
+                except subprocess.TimeoutExpired:
+                    handle_timeout()
+            else:
+                end = time.time() + timeout
+
+                resolution = min(0.1, timeout / 10)
+
+                while True:
+                    ret = popen.poll()
+                    if ret is not None:
+                        break
+
+                    if time.time() > end:
+                        handle_timeout()
+
+                    time.sleep(resolution)
         finally:
             f1.close()
             f2.close()
@@ -1024,7 +1143,7 @@ class Testdir(object):
             print("couldn't print to %s because of encoding" % (fp,))
 
     def _getpytestargs(self):
-        return (sys.executable, "-mpytest")
+        return sys.executable, "-mpytest"
 
     def runpython(self, script):
         """Run a python script using sys.executable as interpreter.
@@ -1041,15 +1160,21 @@ class Testdir(object):
     def runpytest_subprocess(self, *args, **kwargs):
         """Run pytest as a subprocess with given arguments.
 
-        Any plugins added to the :py:attr:`plugins` list will added using the
-        ``-p`` command line option.  Additionally ``--basetemp`` is used put
+        Any plugins added to the :py:attr:`plugins` list will be added using the
+        ``-p`` command line option.  Additionally ``--basetemp`` is used to put
         any temporary files and directories in a numbered directory prefixed
-        with "runpytest-" so they do not conflict with the normal numbered
-        pytest location for temporary files and directories.
+        with "runpytest-" to not conflict with the normal numbered pytest
+        location for temporary files and directories.
+
+        :param args: the sequence of arguments to pass to the pytest subprocess
+        :param timeout: the period in seconds after which to timeout and raise
+            :py:class:`Testdir.TimeoutExpired`
 
         Returns a :py:class:`RunResult`.
 
         """
+        __tracebackhide__ = True
+
         p = py.path.local.make_numbered_dir(
             prefix="runpytest-", keep=None, rootdir=self.tmpdir
         )
@@ -1058,7 +1183,7 @@ class Testdir(object):
         if plugins:
             args = ("-p", plugins[0]) + args
         args = self._getpytestargs() + args
-        return self.run(*args)
+        return self.run(*args, timeout=kwargs.get("timeout"))
 
     def spawn_pytest(self, string, expect_timeout=10.0):
         """Run pytest using pexpect.
@@ -1206,6 +1331,7 @@ class LineMatcher(object):
         matches and non-matches are also printed on stdout.
 
         """
+        __tracebackhide__ = True
         self._match_lines(lines2, fnmatch, "fnmatch")
 
     def re_match_lines(self, lines2):
@@ -1217,6 +1343,7 @@ class LineMatcher(object):
         The matches and non-matches are also printed on stdout.
 
         """
+        __tracebackhide__ = True
         self._match_lines(lines2, lambda name, pat: re.match(pat, name), "re.match")
 
     def _match_lines(self, lines2, match_func, match_nickname):

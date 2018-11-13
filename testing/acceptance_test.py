@@ -1,29 +1,35 @@
 # -*- coding: utf-8 -*-
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import os
 import sys
+import textwrap
 import types
 
+import py
 import six
 
-import _pytest._code
-import py
 import pytest
-from _pytest.main import EXIT_NOTESTSCOLLECTED, EXIT_USAGEERROR
+from _pytest.main import EXIT_NOTESTSCOLLECTED
+from _pytest.main import EXIT_USAGEERROR
+
+
+def prepend_pythonpath(*dirs):
+    cur = os.getenv("PYTHONPATH")
+    if cur:
+        dirs += (cur,)
+    return os.pathsep.join(str(p) for p in dirs)
 
 
 class TestGeneralUsage(object):
     def test_config_error(self, testdir):
-        testdir.makeconftest(
-            """
-            def pytest_configure(config):
-                import pytest
-                raise pytest.UsageError("hello")
-        """
-        )
+        testdir.copy_example("conftest_usageerror/conftest.py")
         result = testdir.runpytest(testdir.tmpdir)
-        assert result.ret != 0
+        assert result.ret == EXIT_USAGEERROR
         result.stderr.fnmatch_lines(["*ERROR: hello"])
+        result.stdout.fnmatch_lines(["*pytest_unconfigure_called"])
 
     def test_root_conftest_syntax_error(self, testdir):
         testdir.makepyfile(conftest="raise SyntaxError\n")
@@ -137,11 +143,18 @@ class TestGeneralUsage(object):
         p2 = testdir.makefile(".pyc", "123")
         result = testdir.runpytest(p1, p2)
         assert result.ret
-        result.stderr.fnmatch_lines(["*ERROR: not found:*%s" % (p2.basename,)])
+        result.stderr.fnmatch_lines(["*ERROR: not found:*{}".format(p2.basename)])
 
-    def test_issue486_better_reporting_on_conftest_load_failure(self, testdir):
+    def test_better_reporting_on_conftest_load_failure(self, testdir, request):
+        """Show a user-friendly traceback on conftest import failures (#486, #3332)"""
         testdir.makepyfile("")
-        testdir.makeconftest("import qwerty")
+        testdir.makeconftest(
+            """
+            def foo():
+                import qwerty
+            foo()
+        """
+        )
         result = testdir.runpytest("--help")
         result.stdout.fnmatch_lines(
             """
@@ -150,10 +163,23 @@ class TestGeneralUsage(object):
         """
         )
         result = testdir.runpytest()
+        dirname = request.node.name + "0"
+        exc_name = (
+            "ModuleNotFoundError" if sys.version_info >= (3, 6) else "ImportError"
+        )
         result.stderr.fnmatch_lines(
-            """
-            *ERROR*could not load*conftest.py*
-        """
+            [
+                "ImportError while loading conftest '*{sep}{dirname}{sep}conftest.py'.".format(
+                    dirname=dirname, sep=os.sep
+                ),
+                "conftest.py:3: in <module>",
+                "    foo()",
+                "conftest.py:2: in foo",
+                "    import qwerty",
+                "E   {}: No module named {q}qwerty{q}".format(
+                    exc_name, q="'" if six.PY3 else ""
+                ),
+            ]
         )
 
     def test_early_skip(self, testdir):
@@ -170,18 +196,7 @@ class TestGeneralUsage(object):
         result.stdout.fnmatch_lines(["*1 skip*"])
 
     def test_issue88_initial_file_multinodes(self, testdir):
-        testdir.makeconftest(
-            """
-            import pytest
-            class MyFile(pytest.File):
-                def collect(self):
-                    return [MyItem("hello", parent=self)]
-            def pytest_collect_file(path, parent):
-                return MyFile(path, parent)
-            class MyItem(pytest.Item):
-                pass
-        """
-        )
+        testdir.copy_example("issue88_initial_file_multinodes")
         p = testdir.makepyfile("def test_hello(): pass")
         result = testdir.runpytest(p, "--collect-only")
         result.stdout.fnmatch_lines(["*MyFile*test_issue88*", "*Module*test_issue88*"])
@@ -218,16 +233,16 @@ class TestGeneralUsage(object):
         testdir.tmpdir.join("py").mksymlinkto(py._pydir)
         p = testdir.tmpdir.join("main.py")
         p.write(
-            _pytest._code.Source(
+            textwrap.dedent(
+                """\
+                import sys, os
+                sys.path.insert(0, '')
+                import py
+                print(py.__file__)
+                print(py.__path__)
+                os.chdir(os.path.dirname(os.getcwd()))
+                print(py.log)
                 """
-            import sys, os
-            sys.path.insert(0, '')
-            import py
-            print (py.__file__)
-            print (py.__path__)
-            os.chdir(os.path.dirname(os.getcwd()))
-            print (py.log)
-        """
             )
         )
         result = testdir.runpython(p)
@@ -470,7 +485,7 @@ class TestInvocationVariants(object):
     @pytest.mark.xfail("sys.platform.startswith('java')")
     def test_pydoc(self, testdir):
         for name in ("py.test", "pytest"):
-            result = testdir.runpython_c("import %s;help(%s)" % (name, name))
+            result = testdir.runpython_c("import {};help({})".format(name, name))
             assert result.ret == 0
             s = result.stdout.str()
             assert "MarkGenerator" in s
@@ -587,14 +602,8 @@ class TestInvocationVariants(object):
         assert result.ret == 0
         result.stdout.fnmatch_lines(["*1 passed*"])
 
-        def join_pythonpath(what):
-            cur = os.environ.get("PYTHONPATH")
-            if cur:
-                return str(what) + os.pathsep + cur
-            return what
-
         empty_package = testdir.mkpydir("empty_package")
-        monkeypatch.setenv("PYTHONPATH", join_pythonpath(empty_package))
+        monkeypatch.setenv("PYTHONPATH", str(empty_package), prepend=os.pathsep)
         # the path which is not a package raises a warning on pypy;
         # no idea why only pypy and not normal python warn about it here
         with warnings.catch_warnings():
@@ -603,7 +612,7 @@ class TestInvocationVariants(object):
         assert result.ret == 0
         result.stdout.fnmatch_lines(["*2 passed*"])
 
-        monkeypatch.setenv("PYTHONPATH", join_pythonpath(testdir))
+        monkeypatch.setenv("PYTHONPATH", str(testdir), prepend=os.pathsep)
         result = testdir.runpytest("--pyargs", "tpkg.test_missing", syspathinsert=True)
         assert result.ret != 0
         result.stderr.fnmatch_lines(["*not*found*test_missing*"])
@@ -625,7 +634,7 @@ class TestInvocationVariants(object):
             lib = ns.mkdir(dirname)
             lib.ensure("__init__.py")
             lib.join("test_{}.py".format(dirname)).write(
-                "def test_{}(): pass\n" "def test_other():pass".format(dirname)
+                "def test_{}(): pass\ndef test_other():pass".format(dirname)
             )
 
         # The structure of the test directory is now:
@@ -643,27 +652,22 @@ class TestInvocationVariants(object):
         #             ├── __init__.py
         #             └── test_world.py
 
-        def join_pythonpath(*dirs):
-            cur = os.environ.get("PYTHONPATH")
-            if cur:
-                dirs += (cur,)
-            return os.pathsep.join(str(p) for p in dirs)
-
-        monkeypatch.setenv("PYTHONPATH", join_pythonpath(*search_path))
+        # NOTE: the different/reversed ordering is intentional here.
+        monkeypatch.setenv("PYTHONPATH", prepend_pythonpath(*search_path))
         for p in search_path:
             monkeypatch.syspath_prepend(p)
 
         # mixed module and filenames:
-        os.chdir("world")
+        monkeypatch.chdir("world")
         result = testdir.runpytest("--pyargs", "-v", "ns_pkg.hello", "ns_pkg/world")
         assert result.ret == 0
         result.stdout.fnmatch_lines(
             [
-                "*test_hello.py::test_hello*PASSED*",
-                "*test_hello.py::test_other*PASSED*",
-                "*test_world.py::test_world*PASSED*",
-                "*test_world.py::test_other*PASSED*",
-                "*4 passed*",
+                "test_hello.py::test_hello*PASSED*",
+                "test_hello.py::test_other*PASSED*",
+                "ns_pkg/world/test_world.py::test_world*PASSED*",
+                "ns_pkg/world/test_world.py::test_other*PASSED*",
+                "*4 passed in*",
             ]
         )
 
@@ -676,6 +680,16 @@ class TestInvocationVariants(object):
         result.stdout.fnmatch_lines(
             ["*test_world.py::test_other*PASSED*", "*1 passed*"]
         )
+
+    def test_invoke_test_and_doctestmodules(self, testdir):
+        p = testdir.makepyfile(
+            """
+            def test():
+                pass
+        """
+        )
+        result = testdir.runpytest(str(p) + "::test", "--doctest-modules")
+        result.stdout.fnmatch_lines(["*1 passed*"])
 
     @pytest.mark.skipif(not hasattr(os, "symlink"), reason="requires symlinks")
     def test_cmdline_python_package_symlink(self, testdir, monkeypatch):
@@ -695,8 +709,6 @@ class TestInvocationVariants(object):
                 pytest.skip(six.text_type(e.args[0]))
         monkeypatch.delenv("PYTHONDONTWRITEBYTECODE", raising=False)
 
-        search_path = ["lib", os.path.join("local", "lib")]
-
         dirname = "lib"
         d = testdir.mkdir(dirname)
         foo = d.mkdir("foo")
@@ -704,10 +716,10 @@ class TestInvocationVariants(object):
         lib = foo.mkdir("bar")
         lib.ensure("__init__.py")
         lib.join("test_bar.py").write(
-            "def test_bar(): pass\n" "def test_other(a_fixture):pass"
+            "def test_bar(): pass\ndef test_other(a_fixture):pass"
         )
         lib.join("conftest.py").write(
-            "import pytest\n" "@pytest.fixture\n" "def a_fixture():pass"
+            "import pytest\n@pytest.fixture\ndef a_fixture():pass"
         )
 
         d_local = testdir.mkdir("local")
@@ -729,27 +741,33 @@ class TestInvocationVariants(object):
         #             ├── conftest.py
         #             └── test_bar.py
 
-        def join_pythonpath(*dirs):
-            cur = os.getenv("PYTHONPATH")
-            if cur:
-                dirs += (cur,)
-            return os.pathsep.join(str(p) for p in dirs)
-
-        monkeypatch.setenv("PYTHONPATH", join_pythonpath(*search_path))
+        # NOTE: the different/reversed ordering is intentional here.
+        search_path = ["lib", os.path.join("local", "lib")]
+        monkeypatch.setenv("PYTHONPATH", prepend_pythonpath(*search_path))
         for p in search_path:
             monkeypatch.syspath_prepend(p)
 
         # module picked up in symlink-ed directory:
+        # It picks up local/lib/foo/bar (symlink) via sys.path.
         result = testdir.runpytest("--pyargs", "-v", "foo.bar")
         testdir.chdir()
         assert result.ret == 0
-        result.stdout.fnmatch_lines(
-            [
-                "*lib/foo/bar/test_bar.py::test_bar*PASSED*",
-                "*lib/foo/bar/test_bar.py::test_other*PASSED*",
-                "*2 passed*",
-            ]
-        )
+        if hasattr(py.path.local, "mksymlinkto"):
+            result.stdout.fnmatch_lines(
+                [
+                    "lib/foo/bar/test_bar.py::test_bar PASSED*",
+                    "lib/foo/bar/test_bar.py::test_other PASSED*",
+                    "*2 passed*",
+                ]
+            )
+        else:
+            result.stdout.fnmatch_lines(
+                [
+                    "*lib/foo/bar/test_bar.py::test_bar PASSED*",
+                    "*lib/foo/bar/test_bar.py::test_other PASSED*",
+                    "*2 passed*",
+                ]
+            )
 
     def test_cmdline_python_package_not_exists(self, testdir):
         result = testdir.runpytest("--pyargs", "tpkgwhatv")
@@ -823,7 +841,10 @@ class TestDurations(object):
         result = testdir.runpytest("--durations=10")
         assert result.ret == 0
         result.stdout.fnmatch_lines_random(
-            ["*durations*", "*call*test_3*", "*call*test_2*", "*call*test_1*"]
+            ["*durations*", "*call*test_3*", "*call*test_2*"]
+        )
+        result.stdout.fnmatch_lines(
+            ["(0.00 durations hidden.  Use -vv to show these durations.)"]
         )
 
     def test_calls_show_2(self, testdir):
@@ -837,19 +858,31 @@ class TestDurations(object):
         testdir.makepyfile(self.source)
         result = testdir.runpytest("--durations=0")
         assert result.ret == 0
+        for x in "23":
+            for y in ("call",):  # 'setup', 'call', 'teardown':
+                for line in result.stdout.lines:
+                    if ("test_%s" % x) in line and y in line:
+                        break
+                else:
+                    raise AssertionError("not found {} {}".format(x, y))
+
+    def test_calls_showall_verbose(self, testdir):
+        testdir.makepyfile(self.source)
+        result = testdir.runpytest("--durations=0", "-vv")
+        assert result.ret == 0
         for x in "123":
             for y in ("call",):  # 'setup', 'call', 'teardown':
                 for line in result.stdout.lines:
                     if ("test_%s" % x) in line and y in line:
                         break
                 else:
-                    raise AssertionError("not found %s %s" % (x, y))
+                    raise AssertionError("not found {} {}".format(x, y))
 
     def test_with_deselected(self, testdir):
         testdir.makepyfile(self.source)
-        result = testdir.runpytest("--durations=2", "-k test_1")
+        result = testdir.runpytest("--durations=2", "-k test_2")
         assert result.ret == 0
-        result.stdout.fnmatch_lines(["*durations*", "*call*test_1*"])
+        result.stdout.fnmatch_lines(["*durations*", "*call*test_2*"])
 
     def test_with_failing_collection(self, testdir):
         testdir.makepyfile(self.source)
@@ -869,13 +902,15 @@ class TestDurations(object):
 
 class TestDurationWithFixture(object):
     source = """
+        import pytest
         import time
-        frag = 0.001
-        def setup_function(func):
-            time.sleep(frag * 3)
-        def test_1():
-            time.sleep(frag*2)
-        def test_2():
+        frag = 0.01
+
+        @pytest.fixture
+        def setup_fixt():
+            time.sleep(frag)
+
+        def test_1(setup_fixt):
             time.sleep(frag)
     """
 
@@ -1061,3 +1096,15 @@ def test_frame_leak_on_failing_test(testdir):
     )
     result = testdir.runpytest_subprocess()
     result.stdout.fnmatch_lines(["*1 failed, 1 passed in*"])
+
+
+def test_fixture_mock_integration(testdir):
+    """Test that decorators applied to fixture are left working (#3774)"""
+    p = testdir.copy_example("acceptance/fixture_mock_integration.py")
+    result = testdir.runpytest(p)
+    result.stdout.fnmatch_lines("*1 passed*")
+
+
+def test_usage_error_code(testdir):
+    result = testdir.runpytest("-unknown-option-")
+    assert result.ret == EXIT_USAGEERROR

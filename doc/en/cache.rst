@@ -162,8 +162,8 @@ When no tests failed in the last run, or when no cached ``lastfailed`` data was
 found, ``pytest`` can be configured either to run all of the tests or no tests,
 using the ``--last-failed-no-failures`` option, which takes one of the following values::
 
-    pytest --last-failed-no-failures all    # run all tests (default behavior)
-    pytest --last-failed-no-failures none   # run no tests and exit
+    pytest --last-failed --last-failed-no-failures all    # run all tests (default behavior)
+    pytest --last-failed --last-failed-no-failures none   # run no tests and exit
 
 The new config.cache object
 --------------------------------
@@ -244,6 +244,8 @@ You can always peek at the content of the cache using the
       {'test_caching.py::test_function': True}
     cache/nodeids contains:
       ['test_caching.py::test_function']
+    cache/stepwise contains:
+      []
     example/value contains:
       42
 
@@ -260,3 +262,9 @@ by adding the ``--cache-clear`` option like this::
 This is recommended for invocations from Continuous Integration
 servers where isolation and correctness is more important
 than speed.
+
+
+Stepwise
+--------
+
+As an alternative to ``--lf -x``, especially for cases where you expect a large part of the test suite will fail, ``--sw``, ``--stepwise`` allows you to fix them one at a time. The test suite will run until the first failure and then stop. At the next invocation, tests will continue from the last failing test and then run until the next failing test. You may use the ``--stepwise-skip`` option to ignore one failing test and stop the test execution on the second failing test instead. This is useful if you get stuck on a failing test and just want to ignore it until later.

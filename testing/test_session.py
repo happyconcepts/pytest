@@ -1,7 +1,8 @@
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 import pytest
-
 from _pytest.main import EXIT_NOTESTSCOLLECTED
 
 
@@ -218,7 +219,7 @@ class TestNewSession(SessionTests):
         started = reprec.getcalls("pytest_collectstart")
         finished = reprec.getreports("pytest_collectreport")
         assert len(started) == len(finished)
-        assert len(started) == 7  # XXX extra TopCollector
+        assert len(started) == 8
         colfail = [x for x in finished if x.failed]
         assert len(colfail) == 1
 
@@ -322,7 +323,11 @@ def test_rootdir_option_arg(testdir, monkeypatch, path):
 
     result = testdir.runpytest("--rootdir={}".format(path))
     result.stdout.fnmatch_lines(
-        ["*rootdir: {}/root, inifile:*".format(testdir.tmpdir), "*1 passed*"]
+        [
+            "*rootdir: {}/root, inifile:*".format(testdir.tmpdir),
+            "root/test_rootdir_option_arg.py *",
+            "*1 passed*",
+        ]
     )
 
 

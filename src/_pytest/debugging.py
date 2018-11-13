@@ -1,16 +1,14 @@
 """ interactive debugging with PDB, the Python Debugger. """
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import pdb
 import sys
-import os
 from doctest import UnexpectedException
 
-try:
-    from builtins import breakpoint  # noqa
-
-    SUPPORTS_BREAKPOINT_BUILTIN = True
-except ImportError:
-    SUPPORTS_BREAKPOINT_BUILTIN = False
+from _pytest import outcomes
+from _pytest.config import hookimpl
 
 
 def pytest_addoption(parser):
@@ -28,6 +26,12 @@ def pytest_addoption(parser):
         help="start a custom interactive Python debugger on errors. "
         "For example: --pdbcls=IPython.terminal.debugger:TerminalPdb",
     )
+    group._addoption(
+        "--trace",
+        dest="trace",
+        action="store_true",
+        help="Immediately break when running each test.",
+    )
 
 
 def pytest_configure(config):
@@ -38,28 +42,29 @@ def pytest_configure(config):
     else:
         pdb_cls = pdb.Pdb
 
+    if config.getvalue("trace"):
+        config.pluginmanager.register(PdbTrace(), "pdbtrace")
     if config.getvalue("usepdb"):
         config.pluginmanager.register(PdbInvoke(), "pdbinvoke")
 
-    # Use custom Pdb class set_trace instead of default Pdb on breakpoint() call
-    if SUPPORTS_BREAKPOINT_BUILTIN:
-        _environ_pythonbreakpoint = os.environ.get("PYTHONBREAKPOINT", "")
-        if _environ_pythonbreakpoint == "":
-            sys.breakpointhook = pytestPDB.set_trace
-
-    old = (pdb.set_trace, pytestPDB._pluginmanager)
-
-    def fin():
-        pdb.set_trace, pytestPDB._pluginmanager = old
-        pytestPDB._config = None
-        pytestPDB._pdb_cls = pdb.Pdb
-        if SUPPORTS_BREAKPOINT_BUILTIN:
-            sys.breakpointhook = sys.__breakpointhook__
-
+    pytestPDB._saved.append(
+        (pdb.set_trace, pytestPDB._pluginmanager, pytestPDB._config, pytestPDB._pdb_cls)
+    )
     pdb.set_trace = pytestPDB.set_trace
     pytestPDB._pluginmanager = config.pluginmanager
     pytestPDB._config = config
     pytestPDB._pdb_cls = pdb_cls
+
+    # NOTE: not using pytest_unconfigure, since it might get called although
+    #       pytest_configure was not (if another plugin raises UsageError).
+    def fin():
+        (
+            pdb.set_trace,
+            pytestPDB._pluginmanager,
+            pytestPDB._config,
+            pytestPDB._pdb_cls,
+        ) = pytestPDB._saved.pop()
+
     config._cleanup.append(fin)
 
 
@@ -69,9 +74,10 @@ class pytestPDB(object):
     _pluginmanager = None
     _config = None
     _pdb_cls = pdb.Pdb
+    _saved = []
 
     @classmethod
-    def set_trace(cls):
+    def set_trace(cls, set_break=True):
         """ invoke PDB set_trace debugging, dropping any IO capturing. """
         import _pytest.config
 
@@ -82,26 +88,93 @@ class pytestPDB(object):
                 capman.suspend_global_capture(in_=True)
             tw = _pytest.config.create_terminal_writer(cls._config)
             tw.line()
-            tw.sep(">", "PDB set_trace (IO-capturing turned off)")
-            cls._pluginmanager.hook.pytest_enter_pdb(config=cls._config)
-        cls._pdb_cls().set_trace(frame)
+            if capman and capman.is_globally_capturing():
+                tw.sep(">", "PDB set_trace (IO-capturing turned off)")
+            else:
+                tw.sep(">", "PDB set_trace")
+
+            class _PdbWrapper(cls._pdb_cls, object):
+                _pytest_capman = capman
+                _continued = False
+
+                def do_continue(self, arg):
+                    ret = super(_PdbWrapper, self).do_continue(arg)
+                    if self._pytest_capman:
+                        tw = _pytest.config.create_terminal_writer(cls._config)
+                        tw.line()
+                        if self._pytest_capman.is_globally_capturing():
+                            tw.sep(">", "PDB continue (IO-capturing resumed)")
+                        else:
+                            tw.sep(">", "PDB continue")
+                        self._pytest_capman.resume_global_capture()
+                    cls._pluginmanager.hook.pytest_leave_pdb(
+                        config=cls._config, pdb=self
+                    )
+                    self._continued = True
+                    return ret
+
+                do_c = do_cont = do_continue
+
+                def setup(self, f, tb):
+                    """Suspend on setup().
+
+                    Needed after do_continue resumed, and entering another
+                    breakpoint again.
+                    """
+                    ret = super(_PdbWrapper, self).setup(f, tb)
+                    if not ret and self._continued:
+                        # pdb.setup() returns True if the command wants to exit
+                        # from the interaction: do not suspend capturing then.
+                        if self._pytest_capman:
+                            self._pytest_capman.suspend_global_capture(in_=True)
+                    return ret
+
+            _pdb = _PdbWrapper()
+            cls._pluginmanager.hook.pytest_enter_pdb(config=cls._config, pdb=_pdb)
+        else:
+            _pdb = cls._pdb_cls()
+
+        if set_break:
+            _pdb.set_trace(frame)
 
 
 class PdbInvoke(object):
     def pytest_exception_interact(self, node, call, report):
         capman = node.config.pluginmanager.getplugin("capturemanager")
         if capman:
-            out, err = capman.suspend_global_capture(in_=True)
+            capman.suspend_global_capture(in_=True)
+            out, err = capman.read_global_capture()
             sys.stdout.write(out)
             sys.stdout.write(err)
         _enter_pdb(node, call.excinfo, report)
 
     def pytest_internalerror(self, excrepr, excinfo):
-        for line in str(excrepr).split("\n"):
-            sys.stderr.write("INTERNALERROR> %s\n" % line)
-            sys.stderr.flush()
         tb = _postmortem_traceback(excinfo)
         post_mortem(tb)
+
+
+class PdbTrace(object):
+    @hookimpl(hookwrapper=True)
+    def pytest_pyfunc_call(self, pyfuncitem):
+        _test_pytest_function(pyfuncitem)
+        yield
+
+
+def _test_pytest_function(pyfuncitem):
+    pytestPDB.set_trace(set_break=False)
+    testfunction = pyfuncitem.obj
+    pyfuncitem.obj = pdb.runcall
+    if pyfuncitem._isyieldedfunction():
+        arg_list = list(pyfuncitem._args)
+        arg_list.insert(0, testfunction)
+        pyfuncitem._args = tuple(arg_list)
+    else:
+        if "func" in pyfuncitem._fixtureinfo.argnames:
+            raise ValueError("--trace can't be used with a fixture named func!")
+        pyfuncitem.funcargs["func"] = testfunction
+        new_list = list(pyfuncitem._fixtureinfo.argnames)
+        new_list.append("func")
+        pyfuncitem._fixtureinfo.argnames = tuple(new_list)
 
 
 def _enter_pdb(node, excinfo, rep):
@@ -128,8 +201,9 @@ def _enter_pdb(node, excinfo, rep):
     rep.toterminal(tw)
     tw.sep(">", "entering PDB")
     tb = _postmortem_traceback(excinfo)
-    post_mortem(tb)
     rep._pdbshown = True
+    if post_mortem(tb):
+        outcomes.exit("Quitting debugger")
     return rep
 
 
@@ -160,3 +234,4 @@ def post_mortem(t):
     p = Pdb()
     p.reset()
     p.interaction(None, t)
+    return p.quitting

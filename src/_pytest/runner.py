@@ -1,14 +1,22 @@
 """ basic collect and runtest protocol implementations """
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
 
 import bdb
 import os
 import sys
 from time import time
 
-import py
-from _pytest._code.code import TerminalRepr, ExceptionInfo
-from _pytest.outcomes import skip, Skipped, TEST_OUTCOME
+import six
+
+from .reports import CollectErrorRepr
+from .reports import CollectReport
+from .reports import TestReport
+from _pytest._code.code import ExceptionInfo
+from _pytest.outcomes import skip
+from _pytest.outcomes import Skipped
+from _pytest.outcomes import TEST_OUTCOME
 
 #
 # pytest plugin hooks
@@ -28,6 +36,7 @@ def pytest_addoption(parser):
 
 def pytest_terminal_summary(terminalreporter):
     durations = terminalreporter.config.option.durations
+    verbose = terminalreporter.config.getvalue("verbose")
     if durations is None:
         return
     tr = terminalreporter
@@ -47,6 +56,10 @@ def pytest_terminal_summary(terminalreporter):
         dlist = dlist[:durations]
 
     for rep in dlist:
+        if verbose < 2 and rep.duration < 0.005:
+            tr.write_line("")
+            tr.write_line("(0.00 durations hidden.  Use -vv to show these durations.)")
+            break
         nodeid = rep.nodeid.replace("::()::", "::")
         tr.write_line("%02.2fs %-8s %s" % (rep.duration, rep.when, nodeid))
 
@@ -211,101 +224,9 @@ class CallInfo(object):
         if self.excinfo:
             status = "exception: %s" % str(self.excinfo.value)
         else:
-            status = "result: %r" % (self.result,)
+            result = getattr(self, "result", "<NOTSET>")
+            status = "result: %r" % (result,)
         return "<CallInfo when=%r %s>" % (self.when, status)
-
-
-def getslaveinfoline(node):
-    try:
-        return node._slaveinfocache
-    except AttributeError:
-        d = node.slaveinfo
-        ver = "%s.%s.%s" % d["version_info"][:3]
-        node._slaveinfocache = s = "[%s] %s -- Python %s %s" % (
-            d["id"],
-            d["sysplatform"],
-            ver,
-            d["executable"],
-        )
-        return s
-
-
-class BaseReport(object):
-    def __init__(self, **kw):
-        self.__dict__.update(kw)
-
-    def toterminal(self, out):
-        if hasattr(self, "node"):
-            out.line(getslaveinfoline(self.node))
-
-        longrepr = self.longrepr
-        if longrepr is None:
-            return
-
-        if hasattr(longrepr, "toterminal"):
-            longrepr.toterminal(out)
-        else:
-            try:
-                out.line(longrepr)
-            except UnicodeEncodeError:
-                out.line("<unprintable longrepr>")
-
-    def get_sections(self, prefix):
-        for name, content in self.sections:
-            if name.startswith(prefix):
-                yield prefix, content
-
-    @property
-    def longreprtext(self):
-        """
-        Read-only property that returns the full string representation
-        of ``longrepr``.
-
-        .. versionadded:: 3.0
-        """
-        tw = py.io.TerminalWriter(stringio=True)
-        tw.hasmarkup = False
-        self.toterminal(tw)
-        exc = tw.stringio.getvalue()
-        return exc.strip()
-
-    @property
-    def caplog(self):
-        """Return captured log lines, if log capturing is enabled
-
-        .. versionadded:: 3.5
-        """
-        return "\n".join(
-            content for (prefix, content) in self.get_sections("Captured log")
-        )
-
-    @property
-    def capstdout(self):
-        """Return captured text from stdout, if capturing is enabled
-
-        .. versionadded:: 3.0
-        """
-        return "".join(
-            content for (prefix, content) in self.get_sections("Captured stdout")
-        )
-
-    @property
-    def capstderr(self):
-        """Return captured text from stderr, if capturing is enabled
-
-        .. versionadded:: 3.0
-        """
-        return "".join(
-            content for (prefix, content) in self.get_sections("Captured stderr")
-        )
-
-    passed = property(lambda x: x.outcome == "passed")
-    failed = property(lambda x: x.outcome == "failed")
-    skipped = property(lambda x: x.outcome == "skipped")
-
-    @property
-    def fspath(self):
-        return self.nodeid.split("::")[0]
 
 
 def pytest_runtest_makereport(item, call):
@@ -348,78 +269,6 @@ def pytest_runtest_makereport(item, call):
     )
 
 
-class TestReport(BaseReport):
-    """ Basic test report object (also used for setup and teardown calls if
-    they fail).
-    """
-
-    def __init__(
-        self,
-        nodeid,
-        location,
-        keywords,
-        outcome,
-        longrepr,
-        when,
-        sections=(),
-        duration=0,
-        user_properties=(),
-        **extra
-    ):
-        #: normalized collection node id
-        self.nodeid = nodeid
-
-        #: a (filesystempath, lineno, domaininfo) tuple indicating the
-        #: actual location of a test item - it might be different from the
-        #: collected one e.g. if a method is inherited from a different module.
-        self.location = location
-
-        #: a name -> value dictionary containing all keywords and
-        #: markers associated with a test invocation.
-        self.keywords = keywords
-
-        #: test outcome, always one of "passed", "failed", "skipped".
-        self.outcome = outcome
-
-        #: None or a failure representation.
-        self.longrepr = longrepr
-
-        #: one of 'setup', 'call', 'teardown' to indicate runtest phase.
-        self.when = when
-
-        #: user properties is a list of tuples (name, value) that holds user
-        #: defined properties of the test
-        self.user_properties = user_properties
-
-        #: list of pairs ``(str, str)`` of extra information which needs to
-        #: marshallable. Used by pytest to add captured text
-        #: from ``stdout`` and ``stderr``, but may be used by other plugins
-        #: to add arbitrary information to reports.
-        self.sections = list(sections)
-
-        #: time it took to run just the test
-        self.duration = duration
-
-        self.__dict__.update(extra)
-
-    def __repr__(self):
-        return "<TestReport %r when=%r outcome=%r>" % (
-            self.nodeid,
-            self.when,
-            self.outcome,
-        )
-
-
-class TeardownErrorReport(BaseReport):
-    outcome = "failed"
-    when = "teardown"
-
-    def __init__(self, longrepr, **extra):
-        self.longrepr = longrepr
-        self.sections = []
-        self.__dict__.update(extra)
-
-
 def pytest_make_collect_report(collector):
     call = CallInfo(lambda: list(collector.collect()), "collect")
     longrepr = None
@@ -444,35 +293,6 @@ def pytest_make_collect_report(collector):
     )
     rep.call = call  # see collect_one_node
     return rep
-
-
-class CollectReport(BaseReport):
-    def __init__(self, nodeid, outcome, longrepr, result, sections=(), **extra):
-        self.nodeid = nodeid
-        self.outcome = outcome
-        self.longrepr = longrepr
-        self.result = result or []
-        self.sections = list(sections)
-        self.__dict__.update(extra)
-
-    @property
-    def location(self):
-        return (self.fspath, None, self.fspath)
-
-    def __repr__(self):
-        return "<CollectReport %r lenresult=%s outcome=%r>" % (
-            self.nodeid,
-            len(self.result),
-            self.outcome,
-        )
-
-
-class CollectErrorRepr(TerminalRepr):
-    def __init__(self, msg):
-        self.longrepr = msg
-
-    def toterminal(self, out):
-        out.line(self.longrepr, red=True)
 
 
 class SetupState(object):
@@ -509,7 +329,7 @@ class SetupState(object):
                 if exc is None:
                     exc = sys.exc_info()
         if exc:
-            py.builtin._reraise(*exc)
+            six.reraise(*exc)
 
     def _teardown_with_finalization(self, colitem):
         self._callfinalizers(colitem)
@@ -544,7 +364,7 @@ class SetupState(object):
                 if exc is None:
                     exc = sys.exc_info()
         if exc:
-            py.builtin._reraise(*exc)
+            six.reraise(*exc)
 
     def prepare(self, colitem):
         """ setup objects along the collector chain to the test-method
@@ -555,7 +375,7 @@ class SetupState(object):
         # check if the last collection node has raised an error
         for col in self.stack:
             if hasattr(col, "_prepare_exc"):
-                py.builtin._reraise(*col._prepare_exc)
+                six.reraise(*col._prepare_exc)
         for col in needed_collectors[len(self.stack) :]:
             self.stack.append(col)
             try:

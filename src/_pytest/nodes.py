@@ -1,14 +1,19 @@
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import os
+import warnings
 
-import six
-import py
 import attr
+import py
+import six
 
-import _pytest
 import _pytest._code
-
-from _pytest.mark.structures import NodeKeywords, MarkInfo
+from _pytest.compat import getfslineno
+from _pytest.mark.structures import MarkInfo
+from _pytest.mark.structures import NodeKeywords
+from _pytest.outcomes import fail
 
 SEP = "/"
 
@@ -59,11 +64,11 @@ class _CompatProperty(object):
         if obj is None:
             return self
 
-        # TODO: reenable in the features branch
-        # warnings.warn(
-        #     "usage of {owner!r}.{name} is deprecated, please use pytest.{name} instead".format(
-        #         name=self.name, owner=type(owner).__name__),
-        #     PendingDeprecationWarning, stacklevel=2)
+        from _pytest.deprecated import COMPAT_PROPERTY
+
+        warnings.warn(
+            COMPAT_PROPERTY.format(name=self.name, owner=owner.__name__), stacklevel=2
+        )
         return getattr(__import__("pytest"), self.name)
 
 
@@ -124,27 +129,105 @@ class Node(object):
         if isinstance(maybe_compatprop, _CompatProperty):
             return getattr(__import__("pytest"), name)
         else:
+            from _pytest.deprecated import CUSTOM_CLASS
+
             cls = getattr(self, name)
-            # TODO: reenable in the features branch
-            # warnings.warn("use of node.%s is deprecated, "
-            #    "use pytest_pycollect_makeitem(...) to create custom "
-            #    "collection nodes" % name, category=DeprecationWarning)
+            self.warn(CUSTOM_CLASS.format(name=name, type_name=type(self).__name__))
         return cls
 
     def __repr__(self):
         return "<%s %r>" % (self.__class__.__name__, getattr(self, "name", None))
 
-    def warn(self, code, message):
-        """ generate a warning with the given code and message for this
-        item. """
+    def warn(self, _code_or_warning=None, message=None, code=None):
+        """Issue a warning for this item.
+
+        Warnings will be displayed after the test session, unless explicitly suppressed.
+
+        This can be called in two forms:
+
+        **Warning instance**
+
+        This was introduced in pytest 3.8 and uses the standard warning mechanism to issue warnings.
+
+        .. code-block:: python
+
+            node.warn(PytestWarning("some message"))
+
+        The warning instance must be a subclass of :class:`pytest.PytestWarning`.
+
+        **code/message (deprecated)**
+
+        This form was used in pytest prior to 3.8 and is considered deprecated. Using this form will emit another
+        warning about the deprecation:
+
+        .. code-block:: python
+
+            node.warn("CI", "some message")
+
+        :param Union[Warning,str] _code_or_warning:
+            warning instance or warning code (legacy). This parameter receives an underscore for backward
+            compatibility with the legacy code/message form, and will be replaced for something
+            more usual when the legacy form is removed.
+
+        :param Union[str,None] message: message to display when called in the legacy form.
+        :param str code: code for the warning, in legacy form when using keyword arguments.
+        :return:
+        """
+        if message is None:
+            if _code_or_warning is None:
+                raise ValueError("code_or_warning must be given")
+            self._std_warn(_code_or_warning)
+        else:
+            if _code_or_warning and code:
+                raise ValueError(
+                    "code_or_warning and code cannot both be passed to this function"
+                )
+            code = _code_or_warning or code
+            self._legacy_warn(code, message)
+
+    def _legacy_warn(self, code, message):
+        """
+        .. deprecated:: 3.8
+
+            Use :meth:`Node.std_warn <_pytest.nodes.Node.std_warn>` instead.
+
+        Generate a warning with the given code and message for this item.
+        """
+        from _pytest.deprecated import NODE_WARN
+
+        self._std_warn(NODE_WARN)
+
         assert isinstance(code, str)
-        fslocation = getattr(self, "location", None)
-        if fslocation is None:
-            fslocation = getattr(self, "fspath", None)
+        fslocation = get_fslocation_from_item(self)
         self.ihook.pytest_logwarning.call_historic(
             kwargs=dict(
                 code=code, message=message, nodeid=self.nodeid, fslocation=fslocation
             )
+        )
+
+    def _std_warn(self, warning):
+        """Issue a warning for this item.
+
+        Warnings will be displayed after the test session, unless explicitly suppressed
+
+        :param Warning warning: the warning instance to issue. Must be a subclass of PytestWarning.
+
+        :raise ValueError: if ``warning`` instance is not a subclass of PytestWarning.
+        """
+        from _pytest.warning_types import PytestWarning
+
+        if not isinstance(warning, PytestWarning):
+            raise ValueError(
+                "warning must be an instance of PytestWarning or subclass, got {!r}".format(
+                    warning
+                )
+            )
+        path, lineno = get_fslocation_from_item(self)
+        warnings.warn_explicit(
+            warning,
+            category=None,
+            filename=str(path),
+            lineno=lineno + 1 if lineno is not None else None,
         )
 
     # methods for ordering nodes
@@ -173,10 +256,13 @@ class Node(object):
         chain.reverse()
         return chain
 
-    def add_marker(self, marker):
+    def add_marker(self, marker, append=True):
         """dynamically add a marker object to the node.
 
-        :type marker: str or pytest.mark.*
+        :type marker: ``str`` or ``pytest.mark.*``  object
+        :param marker:
+            ``append=True`` whether to append the marker,
+            if ``False`` insert at position ``0``.
         """
         from _pytest.mark import MarkDecorator, MARK_GEN
 
@@ -185,7 +271,10 @@ class Node(object):
         elif not isinstance(marker, MarkDecorator):
             raise ValueError("is not a string or pytest.mark.* Marker")
         self.keywords[marker.name] = marker
-        self.own_markers.append(marker.mark)
+        if append:
+            self.own_markers.append(marker.mark)
+        else:
+            self.own_markers.insert(0, marker.mark)
 
     def iter_markers(self, name=None):
         """
@@ -260,6 +349,9 @@ class Node(object):
         pass
 
     def _repr_failure_py(self, excinfo, style=None):
+        if excinfo.errisinstance(fail.Exception):
+            if not excinfo.value.pytrace:
+                return six.text_type(excinfo.value)
         fm = self.session._fixturemanager
         if excinfo.errisinstance(fm.FixtureLookupError):
             return excinfo.value.formatrepr()
@@ -281,6 +373,11 @@ class Node(object):
             else:
                 style = "long"
 
+        if self.config.option.verbose > 1:
+            truncate_locals = False
+        else:
+            truncate_locals = True
+
         try:
             os.getcwd()
             abspath = False
@@ -293,9 +390,28 @@ class Node(object):
             showlocals=self.config.option.showlocals,
             style=style,
             tbfilter=tbfilter,
+            truncate_locals=truncate_locals,
         )
 
     repr_failure = _repr_failure_py
+
+
+def get_fslocation_from_item(item):
+    """Tries to extract the actual location from an item, depending on available attributes:
+
+    * "fslocation": a pair (path, lineno)
+    * "obj": a Python object that the item wraps.
+    * "fspath": just a path
+
+    :rtype: a tuple of (str|LocalPath, int) with filename and line number.
+    """
+    result = getattr(item, "location", None)
+    if result is not None:
+        return result[:2]
+    obj = getattr(item, "obj", None)
+    if obj is not None:
+        return getfslineno(obj)
+    return getattr(item, "fspath", "unknown location"), -1
 
 
 class Collector(Node):
@@ -331,7 +447,7 @@ class Collector(Node):
 def _check_initialpaths_for_relpath(session, fspath):
     for initial_path in session._initialpaths:
         if fspath.common(initial_path) == initial_path:
-            return fspath.relto(initial_path.dirname)
+            return fspath.relto(initial_path)
 
 
 class FSCollector(Collector):
@@ -352,7 +468,7 @@ class FSCollector(Collector):
 
             if not nodeid:
                 nodeid = _check_initialpaths_for_relpath(session, fspath)
-            if os.sep != SEP:
+            if nodeid and os.sep != SEP:
                 nodeid = nodeid.replace(os.sep, SEP)
 
         super(FSCollector, self).__init__(

@@ -1,10 +1,15 @@
-from __future__ import absolute_import, division, print_function
-import sys
-import py
-import _pytest
-import pytest
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import os
 import shutil
+import sys
+import textwrap
+
+import py
+
+import pytest
 
 pytest_plugins = ("pytester",)
 
@@ -25,10 +30,11 @@ class TestNewAPI(object):
         cache = config.cache
         pytest.raises(TypeError, lambda: cache.set("key/name", cache))
         config.cache.set("key/name", 0)
-        config.cache._getvaluepath("key/name").write("123invalid")
+        config.cache._getvaluepath("key/name").write_bytes(b"123invalid")
         val = config.cache.get("key/name", -2)
         assert val == -2
 
+    @pytest.mark.filterwarnings("default")
     def test_cache_writefail_cachfile_silent(self, testdir):
         testdir.makeini("[pytest]")
         testdir.tmpdir.join(".pytest_cache").write("gone wrong")
@@ -37,6 +43,9 @@ class TestNewAPI(object):
         cache.set("test/broken", [])
 
     @pytest.mark.skipif(sys.platform.startswith("win"), reason="no chmod on windows")
+    @pytest.mark.filterwarnings(
+        "ignore:could not create cache path:pytest.PytestWarning"
+    )
     def test_cache_writefail_permissions(self, testdir):
         testdir.makeini("[pytest]")
         testdir.tmpdir.ensure_dir(".pytest_cache").chmod(0)
@@ -45,6 +54,7 @@ class TestNewAPI(object):
         cache.set("test/broken", [])
 
     @pytest.mark.skipif(sys.platform.startswith("win"), reason="no chmod on windows")
+    @pytest.mark.filterwarnings("default")
     def test_cache_failure_warns(self, testdir):
         testdir.tmpdir.ensure_dir(".pytest_cache").chmod(0)
         testdir.makepyfile(
@@ -56,7 +66,8 @@ class TestNewAPI(object):
         )
         result = testdir.runpytest("-rw")
         assert result.ret == 1
-        result.stdout.fnmatch_lines(["*could not create cache path*", "*2 warnings*"])
+        # warnings from nodeids, lastfailed, and stepwise
+        result.stdout.fnmatch_lines(["*could not create cache path*", "*3 warnings*"])
 
     def test_config_cache(self, testdir):
         testdir.makeconftest(
@@ -148,6 +159,32 @@ def test_cache_reportheader(testdir):
     result.stdout.fnmatch_lines(["cachedir: .pytest_cache"])
 
 
+def test_cache_reportheader_external_abspath(testdir, tmpdir_factory):
+    external_cache = tmpdir_factory.mktemp(
+        "test_cache_reportheader_external_abspath_abs"
+    )
+
+    testdir.makepyfile(
+        """
+        def test_hello():
+            pass
+    """
+    )
+    testdir.makeini(
+        """
+    [pytest]
+    cache_dir = {abscache}
+    """.format(
+            abscache=external_cache
+        )
+    )
+
+    result = testdir.runpytest("-v")
+    result.stdout.fnmatch_lines(
+        ["cachedir: {abscache}".format(abscache=external_cache)]
+    )
+
+
 def test_cache_show(testdir):
     result = testdir.runpytest("--cache-show")
     assert result.ret == 0
@@ -182,7 +219,7 @@ def test_cache_show(testdir):
 
 class TestLastFailed(object):
     def test_lastfailed_usecase(self, testdir, monkeypatch):
-        monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", 1)
+        monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "1")
         p = testdir.makepyfile(
             """
             def test_1():
@@ -196,17 +233,17 @@ class TestLastFailed(object):
         result = testdir.runpytest()
         result.stdout.fnmatch_lines(["*2 failed*"])
         p.write(
-            _pytest._code.Source(
+            textwrap.dedent(
+                """\
+                def test_1():
+                    assert 1
+
+                def test_2():
+                    assert 1
+
+                def test_3():
+                    assert 0
                 """
-            def test_1():
-                assert 1
-
-            def test_2():
-                assert 1
-
-            def test_3():
-                assert 0
-        """
             )
         )
         result = testdir.runpytest("--lf")
@@ -224,19 +261,19 @@ class TestLastFailed(object):
 
     def test_failedfirst_order(self, testdir):
         testdir.tmpdir.join("test_a.py").write(
-            _pytest._code.Source(
+            textwrap.dedent(
+                """\
+                def test_always_passes():
+                    assert 1
                 """
-            def test_always_passes():
-                assert 1
-        """
             )
         )
         testdir.tmpdir.join("test_b.py").write(
-            _pytest._code.Source(
+            textwrap.dedent(
+                """\
+                def test_always_fails():
+                    assert 0
                 """
-            def test_always_fails():
-                assert 0
-        """
             )
         )
         result = testdir.runpytest()
@@ -249,14 +286,14 @@ class TestLastFailed(object):
     def test_lastfailed_failedfirst_order(self, testdir):
         testdir.makepyfile(
             **{
-                "test_a.py": """
+                "test_a.py": """\
                 def test_always_passes():
                     assert 1
-            """,
-                "test_b.py": """
+                """,
+                "test_b.py": """\
                 def test_always_fails():
                     assert 0
-            """,
+                """,
             }
         )
         result = testdir.runpytest()
@@ -268,18 +305,18 @@ class TestLastFailed(object):
         assert "test_a.py" not in result.stdout.str()
 
     def test_lastfailed_difference_invocations(self, testdir, monkeypatch):
-        monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", 1)
+        monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "1")
         testdir.makepyfile(
-            test_a="""
+            test_a="""\
             def test_a1():
                 assert 0
             def test_a2():
                 assert 1
-        """,
-            test_b="""
+            """,
+            test_b="""\
             def test_b1():
                 assert 0
-        """,
+            """,
         )
         p = testdir.tmpdir.join("test_a.py")
         p2 = testdir.tmpdir.join("test_b.py")
@@ -289,11 +326,11 @@ class TestLastFailed(object):
         result = testdir.runpytest("--lf", p2)
         result.stdout.fnmatch_lines(["*1 failed*"])
         p2.write(
-            _pytest._code.Source(
+            textwrap.dedent(
+                """\
+                def test_b1():
+                    assert 1
                 """
-            def test_b1():
-                assert 1
-        """
             )
         )
         result = testdir.runpytest("--lf", p2)
@@ -302,20 +339,20 @@ class TestLastFailed(object):
         result.stdout.fnmatch_lines(["*1 failed*1 desel*"])
 
     def test_lastfailed_usecase_splice(self, testdir, monkeypatch):
-        monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", 1)
+        monkeypatch.setenv("PYTHONDONTWRITEBYTECODE", "1")
         testdir.makepyfile(
-            """
+            """\
             def test_1():
                 assert 0
-        """
+            """
         )
         p2 = testdir.tmpdir.join("test_something.py")
         p2.write(
-            _pytest._code.Source(
+            textwrap.dedent(
+                """\
+                def test_2():
+                    assert 0
                 """
-            def test_2():
-                assert 0
-        """
             )
         )
         result = testdir.runpytest()
@@ -386,13 +423,7 @@ class TestLastFailed(object):
         )
 
         result = testdir.runpytest(test_a, "--lf")
-        result.stdout.fnmatch_lines(
-            [
-                "collected 2 items",
-                "run-last-failure: run all (no recorded failures)",
-                "*2 passed in*",
-            ]
-        )
+        result.stdout.fnmatch_lines(["collected 2 items", "*2 passed in*"])
 
         result = testdir.runpytest(test_b, "--lf")
         result.stdout.fnmatch_lines(
@@ -447,8 +478,8 @@ class TestLastFailed(object):
         )
 
         def rlf(fail_import, fail_run):
-            monkeypatch.setenv("FAILIMPORT", fail_import)
-            monkeypatch.setenv("FAILTEST", fail_run)
+            monkeypatch.setenv("FAILIMPORT", str(fail_import))
+            monkeypatch.setenv("FAILTEST", str(fail_run))
 
             testdir.runpytest("-q")
             config = testdir.parseconfigure()
@@ -492,8 +523,8 @@ class TestLastFailed(object):
         )
 
         def rlf(fail_import, fail_run, args=()):
-            monkeypatch.setenv("FAILIMPORT", fail_import)
-            monkeypatch.setenv("FAILTEST", fail_run)
+            monkeypatch.setenv("FAILIMPORT", str(fail_import))
+            monkeypatch.setenv("FAILTEST", str(fail_run))
 
             result = testdir.runpytest("-q", "--lf", *args)
             config = testdir.parseconfigure()
@@ -588,6 +619,23 @@ class TestLastFailed(object):
         assert result.ret == 0
         assert self.get_cached_last_failed(testdir) == []
         assert result.ret == 0
+
+    @pytest.mark.parametrize("quiet", [True, False])
+    @pytest.mark.parametrize("opt", ["--ff", "--lf"])
+    def test_lf_and_ff_prints_no_needless_message(self, quiet, opt, testdir):
+        # Issue 3853
+        testdir.makepyfile("def test(): assert 0")
+        args = [opt]
+        if quiet:
+            args.append("-q")
+        result = testdir.runpytest(*args)
+        assert "run all" not in result.stdout.str()
+
+        result = testdir.runpytest(*args)
+        if quiet:
+            assert "run all" not in result.stdout.str()
+        else:
+            assert "rerun previous" in result.stdout.str()
 
     def get_cached_last_failed(self, testdir):
         config = testdir.parseconfigure()
@@ -813,3 +861,41 @@ class TestNewFirst(object):
                 "*test_1/test_1.py::test_1[2*",
             ]
         )
+
+
+class TestReadme(object):
+    def check_readme(self, testdir):
+        config = testdir.parseconfigure()
+        readme = config.cache._cachedir.joinpath("README.md")
+        return readme.is_file()
+
+    def test_readme_passed(self, testdir):
+        testdir.makepyfile(
+            """
+            def test_always_passes():
+                assert 1
+        """
+        )
+        testdir.runpytest()
+        assert self.check_readme(testdir) is True
+
+    def test_readme_failed(self, testdir):
+        testdir.makepyfile(
+            """
+            def test_always_passes():
+                assert 0
+        """
+        )
+        testdir.runpytest()
+        assert self.check_readme(testdir) is True
+
+
+def test_gitignore(testdir):
+    """Ensure we automatically create .gitignore file in the pytest_cache directory (#3286)."""
+    from _pytest.cacheprovider import Cache
+
+    config = testdir.parseconfig()
+    cache = Cache.for_config(config)
+    cache.set("foo", "bar")
+    msg = "# created by pytest automatically, do not change\n*"
+    assert cache._cachedir.joinpath(".gitignore").read_text(encoding="UTF-8") == msg

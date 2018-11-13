@@ -1,18 +1,22 @@
 # -*- coding: utf-8 -*-
-from __future__ import absolute_import, division, print_function
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import sys
 import textwrap
 
-import _pytest.assertion as plugin
 import py
+import six
+
+import _pytest.assertion as plugin
 import pytest
-from _pytest.assertion import util
 from _pytest.assertion import truncate
+from _pytest.assertion import util
 
 PY3 = sys.version_info >= (3, 0)
 
 
-@pytest.fixture
 def mock_config():
     class Config(object):
         verbose = False
@@ -510,12 +514,12 @@ class TestAssert_reprcompare(object):
         assert "raised in repr()" not in expl
 
     def test_unicode(self):
-        left = py.builtin._totext("£€", "utf-8")
-        right = py.builtin._totext("£", "utf-8")
+        left = u"£€"
+        right = u"£"
         expl = callequal(left, right)
-        assert expl[0] == py.builtin._totext("'£€' == '£'", "utf-8")
-        assert expl[1] == py.builtin._totext("- £€", "utf-8")
-        assert expl[2] == py.builtin._totext("+ £", "utf-8")
+        assert expl[0] == u"'£€' == '£'"
+        assert expl[1] == u"- £€"
+        assert expl[2] == u"+ £"
 
     def test_nonascii_text(self):
         """
@@ -535,15 +539,12 @@ class TestAssert_reprcompare(object):
 
     def test_mojibake(self):
         # issue 429
-        left = "e"
-        right = "\xc3\xa9"
-        if not isinstance(left, bytes):
-            left = bytes(left, "utf-8")
-            right = bytes(right, "utf-8")
+        left = b"e"
+        right = b"\xc3\xa9"
         expl = callequal(left, right)
         for line in expl:
-            assert isinstance(line, py.builtin.text)
-        msg = py.builtin._totext("\n").join(expl)
+            assert isinstance(line, six.text_type)
+        msg = u"\n".join(expl)
         assert msg
 
 
@@ -768,15 +769,15 @@ def test_rewritten(testdir):
     assert testdir.runpytest().ret == 0
 
 
-def test_reprcompare_notin(mock_config):
-    detail = plugin.pytest_assertrepr_compare(
-        mock_config, "not in", "foo", "aaafoobbb"
-    )[1:]
+def test_reprcompare_notin():
+    config = mock_config()
+    detail = plugin.pytest_assertrepr_compare(config, "not in", "foo", "aaafoobbb")[1:]
     assert detail == ["'foo' is contained here:", "  aaafoobbb", "?    +++"]
 
 
-def test_reprcompare_whitespaces(mock_config):
-    detail = plugin.pytest_assertrepr_compare(mock_config, "==", "\r\n", "\n")
+def test_reprcompare_whitespaces():
+    config = mock_config()
+    detail = plugin.pytest_assertrepr_compare(config, "==", "\r\n", "\n")
     assert detail == [
         r"'\r\n' == '\n'",
         r"Strings contain only whitespace, escaping them using repr()",
@@ -1075,17 +1076,27 @@ def test_diff_newline_at_end(monkeypatch, testdir):
     )
 
 
+@pytest.mark.filterwarnings("default")
 def test_assert_tuple_warning(testdir):
+    msg = "assertion is always true"
     testdir.makepyfile(
         """
         def test_tuple():
             assert(False, 'you shall not pass')
     """
     )
-    result = testdir.runpytest("-rw")
-    result.stdout.fnmatch_lines(
-        ["*test_assert_tuple_warning.py:2", "*assertion is always true*"]
+    result = testdir.runpytest()
+    result.stdout.fnmatch_lines(["*test_assert_tuple_warning.py:2:*{}*".format(msg)])
+
+    # tuples with size != 2 should not trigger the warning
+    testdir.makepyfile(
+        """
+        def test_tuple():
+            assert ()
+    """
     )
+    result = testdir.runpytest()
+    assert msg not in result.stdout.str()
 
 
 def test_assert_indirect_tuple_no_warning(testdir):
