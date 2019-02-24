@@ -14,6 +14,7 @@ import six
 import pytest
 from _pytest.main import EXIT_NOTESTSCOLLECTED
 from _pytest.main import EXIT_USAGEERROR
+from _pytest.warnings import SHOW_PYTEST_WARNINGS_ARG
 
 
 def prepend_pythonpath(*dirs):
@@ -145,6 +146,7 @@ class TestGeneralUsage(object):
         assert result.ret
         result.stderr.fnmatch_lines(["*ERROR: not found:*{}".format(p2.basename)])
 
+    @pytest.mark.filterwarnings("default")
     def test_better_reporting_on_conftest_load_failure(self, testdir, request):
         """Show a user-friendly traceback on conftest import failures (#486, #3332)"""
         testdir.makepyfile("")
@@ -205,7 +207,7 @@ class TestGeneralUsage(object):
         testdir.makeconftest(
             """
             import sys
-            print ("should not be seen")
+            print("should not be seen")
             sys.stderr.write("stder42\\n")
         """
         )
@@ -217,7 +219,7 @@ class TestGeneralUsage(object):
     def test_conftest_printing_shows_if_error(self, testdir):
         testdir.makeconftest(
             """
-            print ("should be seen")
+            print("should be seen")
             assert 0
         """
         )
@@ -298,16 +300,16 @@ class TestGeneralUsage(object):
             """
             import pytest
             def pytest_generate_tests(metafunc):
-                metafunc.addcall({'x': 3}, id='hello-123')
+                metafunc.parametrize('x', [3], ids=['hello-123'])
             def pytest_runtest_setup(item):
-                print (item.keywords)
+                print(item.keywords)
                 if 'hello-123' in item.keywords:
                     pytest.skip("hello")
                 assert 0
         """
         )
         p = testdir.makepyfile("""def test_func(x): pass""")
-        res = testdir.runpytest(p)
+        res = testdir.runpytest(p, SHOW_PYTEST_WARNINGS_ARG)
         assert res.ret == 0
         res.stdout.fnmatch_lines(["*1 skipped*"])
 
@@ -315,13 +317,14 @@ class TestGeneralUsage(object):
         p = testdir.makepyfile(
             """
             def pytest_generate_tests(metafunc):
-                metafunc.addcall({'i': 1}, id="1")
-                metafunc.addcall({'i': 2}, id="2")
+                metafunc.parametrize('i', [1, 2], ids=["1", "2"])
             def test_func(i):
                 pass
         """
         )
-        res = testdir.runpytest(p.basename + "::" + "test_func[1]")
+        res = testdir.runpytest(
+            p.basename + "::" + "test_func[1]", SHOW_PYTEST_WARNINGS_ARG
+        )
         assert res.ret == 0
         res.stdout.fnmatch_lines(["*1 passed*"])
 
@@ -557,12 +560,11 @@ class TestInvocationVariants(object):
     def test_equivalence_pytest_pytest(self):
         assert pytest.main == py.test.cmdline.main
 
-    def test_invoke_with_string(self, capsys):
-        retcode = pytest.main("-h")
-        assert not retcode
-        out, err = capsys.readouterr()
-        assert "--help" in out
-        pytest.raises(ValueError, lambda: pytest.main(0))
+    def test_invoke_with_invalid_type(self, capsys):
+        with pytest.raises(
+            TypeError, match="expected to be a list or tuple of strings, got: '-h'"
+        ):
+            pytest.main("-h")
 
     def test_invoke_with_path(self, tmpdir, capsys):
         retcode = pytest.main(tmpdir)
@@ -802,8 +804,8 @@ class TestInvocationVariants(object):
         result = testdir.runpytest("-rf")
         lines = result.stdout.str().splitlines()
         for line in lines:
-            if line.startswith("FAIL "):
-                testid = line[5:].strip()
+            if line.startswith(("FAIL ", "FAILED ")):
+                _fail, _sep, testid = line.partition(" ")
                 break
         result = testdir.runpytest(testid, "-rf")
         result.stdout.fnmatch_lines([line, "*1 failed*"])
@@ -963,6 +965,20 @@ def test_import_plugin_unicode_name(testdir):
     )
     r = testdir.runpytest()
     assert r.ret == 0
+
+
+def test_pytest_plugins_as_module(testdir):
+    """Do not raise an error if pytest_plugins attribute is a module (#3899)"""
+    testdir.makepyfile(
+        **{
+            "__init__.py": "",
+            "pytest_plugins.py": "",
+            "conftest.py": "from . import pytest_plugins",
+            "test_foo.py": "def test(): pass",
+        }
+    )
+    result = testdir.runpytest()
+    result.stdout.fnmatch_lines("* 1 passed in *")
 
 
 def test_deferred_hook_checking(testdir):

@@ -2,6 +2,7 @@
 from __future__ import unicode_literals
 
 import sys
+import warnings
 
 import six
 
@@ -308,9 +309,9 @@ def test_filterwarnings_mark_registration(testdir):
 def test_warning_captured_hook(testdir):
     testdir.makeconftest(
         """
-        from _pytest.warnings import _issue_config_warning
+        from _pytest.warnings import _issue_warning_captured
         def pytest_configure(config):
-            _issue_config_warning(UserWarning("config warning"), config)
+            _issue_warning_captured(UserWarning("config warning"), config.hook, stacklevel=2)
     """
     )
     testdir.makepyfile(
@@ -592,3 +593,122 @@ def test_infinite_loop_warning_against_unicode_usage_py2(testdir):
     )
     result = testdir.runpytest_subprocess()
     result.stdout.fnmatch_lines(["*1 passed, * warnings in*"])
+
+
+@pytest.mark.parametrize("change_default", [None, "ini", "cmdline"])
+def test_removed_in_pytest4_warning_as_error(testdir, change_default):
+    testdir.makepyfile(
+        """
+        import warnings, pytest
+        def test():
+            warnings.warn(pytest.RemovedInPytest4Warning("some warning"))
+    """
+    )
+    if change_default == "ini":
+        testdir.makeini(
+            """
+            [pytest]
+            filterwarnings =
+                ignore::pytest.RemovedInPytest4Warning
+        """
+        )
+
+    args = (
+        ("-Wignore::pytest.RemovedInPytest4Warning",)
+        if change_default == "cmdline"
+        else ()
+    )
+    result = testdir.runpytest(*args)
+    if change_default is None:
+        result.stdout.fnmatch_lines(["* 1 failed in *"])
+    else:
+        assert change_default in ("ini", "cmdline")
+        result.stdout.fnmatch_lines(["* 1 passed in *"])
+
+
+class TestAssertionWarnings:
+    @staticmethod
+    def assert_result_warns(result, msg):
+        result.stdout.fnmatch_lines(["*PytestWarning: %s*" % msg])
+
+    def test_tuple_warning(self, testdir):
+        testdir.makepyfile(
+            """
+            def test_foo():
+                assert (1,2)
+            """
+        )
+        result = testdir.runpytest()
+        self.assert_result_warns(
+            result, "assertion is always true, perhaps remove parentheses?"
+        )
+
+    @staticmethod
+    def create_file(testdir, return_none):
+        testdir.makepyfile(
+            """
+            def foo(return_none):
+                if return_none:
+                    return None
+                else:
+                    return False
+
+            def test_foo():
+                assert foo({return_none})
+            """.format(
+                return_none=return_none
+            )
+        )
+
+    def test_none_function_warns(self, testdir):
+        self.create_file(testdir, True)
+        result = testdir.runpytest()
+        self.assert_result_warns(
+            result, 'asserting the value None, please use "assert is None"'
+        )
+
+    def test_assert_is_none_no_warn(self, testdir):
+        testdir.makepyfile(
+            """
+            def foo():
+                return None
+
+            def test_foo():
+                assert foo() is None
+            """
+        )
+        result = testdir.runpytest()
+        result.stdout.fnmatch_lines(["*1 passed in*"])
+
+    def test_false_function_no_warn(self, testdir):
+        self.create_file(testdir, False)
+        result = testdir.runpytest()
+        result.stdout.fnmatch_lines(["*1 failed in*"])
+
+
+def test_warnings_checker_twice():
+    """Issue #4617"""
+    expectation = pytest.warns(UserWarning)
+    with expectation:
+        warnings.warn("Message A", UserWarning)
+    with expectation:
+        warnings.warn("Message B", UserWarning)
+
+
+@pytest.mark.filterwarnings("always")
+def test_group_warnings_by_message(testdir):
+    testdir.copy_example("warnings/test_group_warnings_by_message.py")
+    result = testdir.runpytest()
+    result.stdout.fnmatch_lines(
+        [
+            "test_group_warnings_by_message.py::test_foo[0]",
+            "test_group_warnings_by_message.py::test_foo[1]",
+            "test_group_warnings_by_message.py::test_foo[2]",
+            "test_group_warnings_by_message.py::test_foo[3]",
+            "test_group_warnings_by_message.py::test_foo[4]",
+            "test_group_warnings_by_message.py::test_bar",
+        ]
+    )
+    warning_code = 'warnings.warn(UserWarning("foo"))'
+    assert warning_code in result.stdout.str()
+    assert result.stdout.str().count(warning_code) == 1

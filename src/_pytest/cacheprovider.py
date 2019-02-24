@@ -9,6 +9,7 @@ from __future__ import division
 from __future__ import print_function
 
 import json
+import os
 from collections import OrderedDict
 
 import attr
@@ -32,6 +33,13 @@ which provides the `--lf` and `--ff` options, as well as the `cache` fixture.
 See [the docs](https://docs.pytest.org/en/latest/cache.html) for more information.
 """
 
+CACHEDIR_TAG_CONTENT = b"""\
+Signature: 8a477f597d28d172789f06886806bc55
+# This file is a cache directory tag created by pytest.
+# For information about cache directory tags, see:
+#	http://www.bford.info/cachedir/spec.html
+"""
+
 
 @attr.s
 class Cache(object):
@@ -51,11 +59,13 @@ class Cache(object):
         return resolve_from_str(config.getini("cache_dir"), config.rootdir)
 
     def warn(self, fmt, **args):
-        from _pytest.warnings import _issue_config_warning
+        from _pytest.warnings import _issue_warning_captured
         from _pytest.warning_types import PytestWarning
 
-        _issue_config_warning(
-            PytestWarning(fmt.format(**args) if args else fmt), self._config
+        _issue_warning_captured(
+            PytestWarning(fmt.format(**args) if args else fmt),
+            self._config.hook,
+            stacklevel=3,
         )
 
     def makedir(self, name):
@@ -107,6 +117,10 @@ class Cache(object):
         """
         path = self._getvaluepath(key)
         try:
+            if path.parent.is_dir():
+                cache_dir_exists_already = True
+            else:
+                cache_dir_exists_already = self._cachedir.exists()
             path.parent.mkdir(exist_ok=True, parents=True)
         except (IOError, OSError):
             self.warn("could not create cache path {path}", path=path)
@@ -118,6 +132,7 @@ class Cache(object):
         else:
             with f:
                 json.dump(value, f, indent=2, sort_keys=True)
+            if not cache_dir_exists_already:
                 self._ensure_supporting_files()
 
     def _ensure_supporting_files(self):
@@ -127,8 +142,14 @@ class Cache(object):
             if not readme_path.is_file():
                 readme_path.write_text(README_CONTENT)
 
-            msg = u"# created by pytest automatically, do not change\n*"
-            self._cachedir.joinpath(".gitignore").write_text(msg, encoding="UTF-8")
+            gitignore_path = self._cachedir.joinpath(".gitignore")
+            if not gitignore_path.is_file():
+                msg = u"# Created by pytest automatically.\n*"
+                gitignore_path.write_text(msg, encoding="UTF-8")
+
+            cachedir_tag_path = self._cachedir.joinpath("CACHEDIR.TAG")
+            if not cachedir_tag_path.is_file():
+                cachedir_tag_path.write_bytes(CACHEDIR_TAG_CONTENT)
 
 
 class LFPlugin(object):
@@ -275,7 +296,10 @@ def pytest_addoption(parser):
         dest="cacheclear",
         help="remove all cache contents at start of test run.",
     )
-    parser.addini("cache_dir", default=".pytest_cache", help="cache directory path.")
+    cache_dir_default = ".pytest_cache"
+    if "TOX_ENV_DIR" in os.environ:
+        cache_dir_default = os.path.join(os.environ["TOX_ENV_DIR"], cache_dir_default)
+    parser.addini("cache_dir", default=cache_dir_default, help="cache directory path.")
     group.addoption(
         "--lfnf",
         "--last-failed-no-failures",

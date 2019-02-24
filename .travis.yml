@@ -1,4 +1,3 @@
-sudo: false
 language: python
 dist: xenial
 stages:
@@ -17,23 +16,30 @@ env:
     # Specialized factors for py27.
     - TOXENV=py27-nobyte
     - TOXENV=py27-xdist
-    - TOXENV=py27-pluggymaster PYTEST_NO_COVERAGE=1
+    - TOXENV=py27-pluggymaster
     # Specialized factors for py37.
     - TOXENV=py37-pexpect,py37-trial,py37-numpy
-    - TOXENV=py37-pluggymaster PYTEST_NO_COVERAGE=1
+    - TOXENV=py37-pluggymaster
     - TOXENV=py37-freeze PYTEST_NO_COVERAGE=1
+
+matrix:
+  allow_failures:
+    - python: '3.8-dev'
+      env: TOXENV=py38-xdist
 
 jobs:
   include:
     # Coverage tracking is slow with pypy, skip it.
-    - env: TOXENV=pypy PYTEST_NO_COVERAGE=1
-      python: 'pypy-5.4'
-      dist: trusty
-    - env: TOXENV=py34
+    - env: TOXENV=pypy-xdist PYTEST_NO_COVERAGE=1
+      python: 'pypy2.7-6.0'
+    - env: TOXENV=pypy3-xdist PYTEST_NO_COVERAGE=1
+      python: 'pypy3.5-6.0'
+
+    - env: TOXENV=py34-xdist
       python: '3.4'
-    - env: TOXENV=py35
+    - env: TOXENV=py35-xdist
       python: '3.5'
-    - env: TOXENV=py36
+    - env: TOXENV=py36-xdist
       python: '3.6'
     - env: TOXENV=py37
     - &test-macos
@@ -43,14 +49,19 @@ jobs:
       sudo: required
       install:
         - python -m pip install --pre tox
-      env: TOXENV=py27
+      env: TOXENV=py27-xdist
     - <<: *test-macos
-      env: TOXENV=py37
+      env: TOXENV=py37-xdist
       before_install:
         - brew update
         - brew upgrade python
         - brew unlink python
         - brew link python
+
+    # Jobs only run via Travis cron jobs (currently daily).
+    - env: TOXENV=py38-xdist
+      python: '3.8-dev'
+      if: type = cron
 
     - stage: baseline
       env: TOXENV=py27-pexpect,py27-trial,py27-numpy
@@ -94,7 +105,7 @@ after_success:
       coverage combine
       coverage xml --ignore-errors
       coverage report -m --ignore-errors
-      bash <(curl -s https://codecov.io/bash) -Z -X gcov -X coveragepy -X search -X xcode -X gcovout -X fix -f coverage.xml -F "${TOXENV//-/,},linux"
+      bash <(curl -s https://codecov.io/bash) -Z -X gcov -X coveragepy -X search -X xcode -X gcovout -X fix -f coverage.xml -F $TRAVIS_OS_NAME
     fi
 
 notifications:

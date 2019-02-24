@@ -18,11 +18,14 @@ and displays them at the end of the session::
     def test_one():
         assert api_v1() == 1
 
-Running pytest now produces this output::
+Running pytest now produces this output:
+
+.. code-block:: pytest
 
     $ pytest test_show_warnings.py
     =========================== test session starts ============================
-    platform linux -- Python 3.x.y, pytest-3.x.y, py-1.x.y, pluggy-0.x.y
+    platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+    cachedir: $PYTHON_PREFIX/.pytest_cache
     rootdir: $REGENDOC_TMPDIR, inifile:
     collected 1 item
 
@@ -37,7 +40,9 @@ Running pytest now produces this output::
     =================== 1 passed, 1 warnings in 0.12 seconds ===================
 
 The ``-W`` flag can be passed to control which warnings will be displayed or even turn
-them into errors::
+them into errors:
+
+.. code-block:: pytest
 
     $ pytest -q test_show_warnings.py -W error::UserWarning
     F                                                                    [100%]
@@ -151,7 +156,7 @@ DeprecationWarning and PendingDeprecationWarning
 .. versionchanged:: 3.9
 
 By default pytest will display ``DeprecationWarning`` and ``PendingDeprecationWarning`` warnings from
-user code and third-party libraries, as recommended by `PEP-0506 <https://www.python.org/dev/peps/pep-0565>`_.
+user code and third-party libraries, as recommended by `PEP-0565 <https://www.python.org/dev/peps/pep-0565>`_.
 This helps users keep their code modern and avoid breakages when deprecated warnings are effectively removed.
 
 Sometimes it is useful to hide some specific deprecation warnings that happen in code that you have no control over
@@ -228,7 +233,7 @@ You can also use it as a contextmanager::
 .. _warns:
 
 Asserting warnings with the warns function
------------------------------------------------
+------------------------------------------
 
 .. versionadded:: 2.8
 
@@ -286,7 +291,7 @@ Alternatively, you can examine raised warnings in detail using the
 .. _recwarn:
 
 Recording warnings
-------------------------
+------------------
 
 You can record raised warnings either using ``pytest.warns`` or with
 the ``recwarn`` fixture.
@@ -324,6 +329,26 @@ warnings, or index into it to get a particular recorded warning.
 
 Full API: :class:`WarningsRecorder`.
 
+.. _custom_failure_messages:
+
+Custom failure messages
+-----------------------
+
+Recording warnings provides an opportunity to produce custom test
+failure messages for when no warnings are issued or other conditions
+are met.
+
+.. code-block:: python
+
+    def test():
+        with pytest.warns(Warning) as record:
+            f()
+            if not record:
+                pytest.fail("Expected a warning!")
+
+If no warnings are issued when calling ``f``, then ``not record`` will
+evaluate to ``True``.  You can then call ``pytest.fail`` with a
+custom error message.
 
 .. _internal-warnings:
 
@@ -347,7 +372,7 @@ defines an ``__init__`` constructor, as this prevents the class from being insta
         def test_foo(self):
             assert 1 == 1
 
-::
+.. code-block:: pytest
 
     $ pytest test_pytest_warnings.py -q
 

@@ -72,18 +72,6 @@ class SessionTests(object):
             print(out)
             pytest.fail("incorrect raises() output")
 
-    def test_generator_yields_None(self, testdir):
-        reprec = testdir.inline_runsource(
-            """
-            def test_1():
-                yield None
-        """
-        )
-        failures = reprec.getfailedcollections()
-        out = failures[0].longrepr.reprcrash.message
-        i = out.find("TypeError")
-        assert i != -1
-
     def test_syntax_error_module(self, testdir):
         reprec = testdir.inline_runsource("this is really not python")
         values = reprec.getfailedcollections()
@@ -193,7 +181,6 @@ class TestNewSession(SessionTests):
         passed, skipped, failed = reprec.countoutcomes()
         assert failed == skipped == 0
         assert passed == 7
-        # also test listnames() here ...
 
     def test_collect_only_with_various_situations(self, testdir):
         p = testdir.makepyfile(
@@ -241,12 +228,8 @@ class TestNewSession(SessionTests):
 
 
 def test_plugin_specify(testdir):
-    pytest.raises(
-        ImportError,
-        """
-            testdir.parseconfig("-p", "nqweotexistent")
-    """,
-    )
+    with pytest.raises(ImportError):
+        testdir.parseconfig("-p", "nqweotexistent")
     # pytest.raises(ImportError,
     #    "config.do_configure(config)"
     # )
@@ -270,20 +253,45 @@ def test_exclude(testdir):
     result.stdout.fnmatch_lines(["*1 passed*"])
 
 
+def test_exclude_glob(testdir):
+    hellodir = testdir.mkdir("hello")
+    hellodir.join("test_hello.py").write("x y syntaxerror")
+    hello2dir = testdir.mkdir("hello2")
+    hello2dir.join("test_hello2.py").write("x y syntaxerror")
+    hello3dir = testdir.mkdir("hallo3")
+    hello3dir.join("test_hello3.py").write("x y syntaxerror")
+    subdir = testdir.mkdir("sub")
+    subdir.join("test_hello4.py").write("x y syntaxerror")
+    testdir.makepyfile(test_ok="def test_pass(): pass")
+    result = testdir.runpytest("--ignore-glob=*h[ea]llo*")
+    assert result.ret == 0
+    result.stdout.fnmatch_lines(["*1 passed*"])
+
+
 def test_deselect(testdir):
     testdir.makepyfile(
         test_a="""
         import pytest
+
         def test_a1(): pass
+
         @pytest.mark.parametrize('b', range(3))
         def test_a2(b): pass
+
+        class TestClass:
+            def test_c1(self): pass
+
+            def test_c2(self): pass
     """
     )
     result = testdir.runpytest(
-        "-v", "--deselect=test_a.py::test_a2[1]", "--deselect=test_a.py::test_a2[2]"
+        "-v",
+        "--deselect=test_a.py::test_a2[1]",
+        "--deselect=test_a.py::test_a2[2]",
+        "--deselect=test_a.py::TestClass::test_c1",
     )
     assert result.ret == 0
-    result.stdout.fnmatch_lines(["*2 passed, 2 deselected*"])
+    result.stdout.fnmatch_lines(["*3 passed, 3 deselected*"])
     for line in result.stdout.lines:
         assert not line.startswith(("test_a.py::test_a2[1]", "test_a.py::test_a2[2]"))
 

@@ -12,7 +12,9 @@ For information on plugin hooks and objects, see :ref:`plugins`.
 
 For information on the ``pytest.mark`` mechanism, see :ref:`mark`.
 
-For information about fixtures, see :ref:`fixtures`. To see a complete list of available fixtures (add ``-v`` to also see fixtures with leading ``_``), type ::
+For information about fixtures, see :ref:`fixtures`. To see a complete list of available fixtures (add ``-v`` to also see fixtures with leading ``_``), type :
+
+.. code-block:: pytest
 
     $ pytest -q --fixtures
     cache
@@ -66,8 +68,6 @@ For information about fixtures, see :ref:`fixtures`. To see a complete list of a
 
             def test_function(record_property):
                 record_property("example_key", 1)
-    record_xml_property
-        (Deprecated) use record_property.
     record_xml_attribute
         Add extra xml attributes to the tag for the calling test.
         The fixture is callable with ``(name, value)``, with value being

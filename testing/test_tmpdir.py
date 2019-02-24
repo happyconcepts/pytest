@@ -4,11 +4,13 @@ from __future__ import print_function
 
 import sys
 
+import attr
 import six
 
 import pytest
 from _pytest import pathlib
 from _pytest.pathlib import Path
+from _pytest.warnings import SHOW_PYTEST_WARNINGS_ARG
 
 
 def test_tmpdir_fixture(testdir):
@@ -24,12 +26,29 @@ def test_ensuretemp(recwarn):
     assert d1.check(dir=1)
 
 
+@attr.s
+class FakeConfig(object):
+    basetemp = attr.ib()
+    trace = attr.ib(default=None)
+
+    @property
+    def trace(self):
+        return self
+
+    def get(self, key):
+        return lambda *k: None
+
+    @property
+    def option(self):
+        return self
+
+
 class TestTempdirHandler(object):
-    def test_mktemp(self, testdir):
+    def test_mktemp(self, tmp_path):
+
         from _pytest.tmpdir import TempdirFactory, TempPathFactory
 
-        config = testdir.parseconfig()
-        config.option.basetemp = testdir.mkdir("hello")
+        config = FakeConfig(tmp_path)
         t = TempdirFactory(TempPathFactory.from_config(config))
         tmp = t.mktemp("world")
         assert tmp.relto(t.getbasetemp()) == "world0"
@@ -38,6 +57,15 @@ class TestTempdirHandler(object):
         tmp2 = t.mktemp("this")
         assert tmp2.relto(t.getbasetemp()).startswith("this")
         assert tmp2 != tmp
+
+    @pytest.mark.issue(4425)
+    def test_tmppath_relative_basetemp_absolute(self, tmp_path, monkeypatch):
+        from _pytest.tmpdir import TempPathFactory
+
+        monkeypatch.chdir(tmp_path)
+        config = FakeConfig("hello")
+        t = TempPathFactory.from_config(config)
+        assert t.getbasetemp().resolve() == (tmp_path / "hello").resolve()
 
 
 class TestConfigTmpdir(object):
@@ -67,7 +95,7 @@ def test_basetemp(testdir):
             pytest.ensuretemp("hello")
     """
     )
-    result = testdir.runpytest(p, "--basetemp=%s" % mytemp)
+    result = testdir.runpytest(p, "--basetemp=%s" % mytemp, SHOW_PYTEST_WARNINGS_ARG)
     assert result.ret == 0
     assert mytemp.join("hello").check()
 
@@ -91,6 +119,22 @@ def test_tmpdir_always_is_realpath(testdir):
     )
     result = testdir.runpytest("-s", p, "--basetemp=%s/bt" % linktemp)
     assert not result.ret
+
+
+def test_tmp_path_always_is_realpath(testdir, monkeypatch):
+    # for reasoning see: test_tmpdir_always_is_realpath test-case
+    realtemp = testdir.tmpdir.mkdir("myrealtemp")
+    linktemp = testdir.tmpdir.join("symlinktemp")
+    attempt_symlink_to(linktemp, str(realtemp))
+    monkeypatch.setenv("PYTEST_DEBUG_TEMPROOT", str(linktemp))
+    testdir.makepyfile(
+        """
+        def test_1(tmp_path):
+            assert tmp_path.resolve() == tmp_path
+    """
+    )
+    reprec = testdir.inline_run()
+    reprec.assertoutcome(passed=1)
 
 
 def test_tmpdir_too_long_on_parametrization(testdir):
@@ -309,3 +353,7 @@ def attempt_symlink_to(path, to_path):
         Path(path).symlink_to(Path(to_path))
     except OSError:
         pytest.skip("could not create symbolic link")
+
+
+def test_tmpdir_equals_tmp_path(tmpdir, tmp_path):
+    assert Path(tmpdir) == tmp_path

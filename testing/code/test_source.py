@@ -6,6 +6,7 @@ from __future__ import absolute_import
 from __future__ import division
 from __future__ import print_function
 
+import ast
 import inspect
 import sys
 
@@ -14,7 +15,6 @@ import six
 import _pytest._code
 import pytest
 from _pytest._code import Source
-from _pytest._code.source import ast
 
 
 astonly = pytest.mark.nothing
@@ -306,8 +306,6 @@ class TestSourceParsingAndCompiling(object):
         pytest.raises(SyntaxError, lambda: source.getstatementrange(0))
 
     def test_compile_to_ast(self):
-        import ast
-
         source = Source("x = 4")
         mod = source.compile(flag=ast.PyCF_ONLY_AST)
         assert isinstance(mod, ast.Module)
@@ -317,10 +315,9 @@ class TestSourceParsingAndCompiling(object):
         co = self.source.compile()
         six.exec_(co, globals())
         f(7)
-        excinfo = pytest.raises(AssertionError, "f(6)")
+        excinfo = pytest.raises(AssertionError, f, 6)
         frame = excinfo.traceback[-1].frame
         stmt = frame.code.fullsource.getstatement(frame.lineno)
-        # print "block", str(block)
         assert str(stmt).strip().startswith("assert")
 
     @pytest.mark.parametrize("name", ["", None, "my"])
@@ -361,17 +358,13 @@ def test_getline_finally():
     def c():
         pass
 
-    excinfo = pytest.raises(
-        TypeError,
-        """
-           teardown = None
-           try:
-                c(1)
-           finally:
-                if teardown:
-                    teardown()
-    """,
-    )
+    with pytest.raises(TypeError) as excinfo:
+        teardown = None
+        try:
+            c(1)
+        finally:
+            if teardown:
+                teardown()
     source = excinfo.traceback[-1].statement
     assert str(source).strip() == "c(1)"
 
@@ -567,7 +560,6 @@ def test_oneline_and_comment():
     assert str(source) == "raise ValueError"
 
 
-@pytest.mark.xfail(hasattr(sys, "pypy_version_info"), reason="does not work on pypy")
 def test_comments():
     source = '''def test():
     "comment 1"
@@ -583,9 +575,15 @@ comment 4
 '''
     for line in range(2, 6):
         assert str(getstatement(line, source)) == "    x = 1"
-    for line in range(6, 10):
+    if sys.version_info >= (3, 8) or hasattr(sys, "pypy_version_info"):
+        tqs_start = 8
+    else:
+        tqs_start = 10
+        assert str(getstatement(10, source)) == '"""'
+    for line in range(6, tqs_start):
         assert str(getstatement(line, source)) == "    assert False"
-    assert str(getstatement(10, source)) == '"""'
+    for line in range(tqs_start, 10):
+        assert str(getstatement(line, source)) == '"""\ncomment 4\n"""'
 
 
 def test_comment_in_statement():

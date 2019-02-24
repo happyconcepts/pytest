@@ -10,7 +10,8 @@ INSTALL_REQUIRES = [
     "six>=1.10.0",
     "setuptools",
     "attrs>=17.4.0",
-    "more-itertools>=4.0.0",
+    'more-itertools>=4.0.0,<6.0.0;python_version<="2.7"',
+    'more-itertools>=4.0.0;python_version>"2.7"',
     "atomicwrites>=1.0",
     'funcsigs;python_version<"3.0"',
     'pathlib2>=2.2.0;python_version<"3.6"',
@@ -29,6 +30,16 @@ def main():
         use_scm_version={"write_to": "src/_pytest/_version.py"},
         setup_requires=["setuptools-scm", "setuptools>=40.0"],
         package_dir={"": "src"},
+        # fmt: off
+        extras_require={
+            "testing": [
+                "hypothesis>=3.56",
+                "nose",
+                "requests",
+                "mock;python_version=='2.7'",
+            ],
+        },
+        # fmt: on
         install_requires=INSTALL_REQUIRES,
     )
 

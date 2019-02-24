@@ -21,20 +21,6 @@ class TestCollector(object):
         assert not issubclass(Collector, Item)
         assert not issubclass(Item, Collector)
 
-    def test_compat_attributes(self, testdir, recwarn):
-        modcol = testdir.getmodulecol(
-            """
-            def test_pass(): pass
-            def test_fail(): assert 0
-        """
-        )
-        recwarn.clear()
-        assert modcol.Module == pytest.Module
-        assert modcol.Class == pytest.Class
-        assert modcol.Item == pytest.Item
-        assert modcol.File == pytest.File
-        assert modcol.Function == pytest.Function
-
     def test_check_equality(self, testdir):
         modcol = testdir.getmodulecol(
             """
@@ -388,6 +374,26 @@ class TestCustomConftests(object):
         assert result.ret == 0
         assert "passed" in result.stdout.str()
 
+    def test_collectignoreglob_exclude_on_option(self, testdir):
+        testdir.makeconftest(
+            """
+            collect_ignore_glob = ['*w*l[dt]*']
+            def pytest_addoption(parser):
+                parser.addoption("--XX", action="store_true", default=False)
+            def pytest_configure(config):
+                if config.getvalue("XX"):
+                    collect_ignore_glob[:] = []
+        """
+        )
+        testdir.makepyfile(test_world="def test_hello(): pass")
+        testdir.makepyfile(test_welt="def test_hallo(): pass")
+        result = testdir.runpytest()
+        assert result.ret == EXIT_NOTESTSCOLLECTED
+        result.stdout.fnmatch_lines("*collected 0 items*")
+        result = testdir.runpytest("--XX")
+        assert result.ret == 0
+        result.stdout.fnmatch_lines("*2 passed*")
+
     def test_pytest_fs_collect_hooks_are_seen(self, testdir):
         testdir.makeconftest(
             """
@@ -512,13 +518,8 @@ class TestSession(object):
                     pass
         """
         )
-        normid = p.basename + "::TestClass::()::test_method"
-        for id in [
-            p.basename,
-            p.basename + "::TestClass",
-            p.basename + "::TestClass::()",
-            normid,
-        ]:
+        normid = p.basename + "::TestClass::test_method"
+        for id in [p.basename, p.basename + "::TestClass", normid]:
             items, hookrec = testdir.inline_genitems(id)
             assert len(items) == 1
             assert items[0].name == "test_method"
@@ -627,7 +628,7 @@ class TestSession(object):
         items, hookrec = testdir.inline_genitems(arg)
         assert len(items) == 1
         item, = items
-        assert item.nodeid.endswith("TestClass::()::test_method")
+        assert item.nodeid.endswith("TestClass::test_method")
         # ensure we are reporting the collection of the single test item (#2464)
         assert [x.name for x in self.get_reported_items(hookrec)] == ["test_method"]
 
@@ -955,10 +956,10 @@ def test_collect_init_tests(testdir):
         [
             "collected 2 items",
             "<Package *",
-            "  <Module '__init__.py'>",
-            "    <Function 'test_init'>",
-            "  <Module 'test_foo.py'>",
-            "    <Function 'test_foo'>",
+            "  <Module __init__.py>",
+            "    <Function test_init>",
+            "  <Module test_foo.py>",
+            "    <Function test_foo>",
         ]
     )
     result = testdir.runpytest("./tests", "--collect-only")
@@ -966,10 +967,10 @@ def test_collect_init_tests(testdir):
         [
             "collected 2 items",
             "<Package *",
-            "  <Module '__init__.py'>",
-            "    <Function 'test_init'>",
-            "  <Module 'test_foo.py'>",
-            "    <Function 'test_foo'>",
+            "  <Module __init__.py>",
+            "    <Function test_init>",
+            "  <Module test_foo.py>",
+            "    <Function test_foo>",
         ]
     )
     # Ignores duplicates with "." and pkginit (#4310).
@@ -977,11 +978,11 @@ def test_collect_init_tests(testdir):
     result.stdout.fnmatch_lines(
         [
             "collected 2 items",
-            "<Package */tests'>",
-            "  <Module '__init__.py'>",
-            "    <Function 'test_init'>",
-            "  <Module 'test_foo.py'>",
-            "    <Function 'test_foo'>",
+            "<Package */tests>",
+            "  <Module __init__.py>",
+            "    <Function test_init>",
+            "  <Module test_foo.py>",
+            "    <Function test_foo>",
         ]
     )
     # Same as before, but different order.
@@ -989,21 +990,21 @@ def test_collect_init_tests(testdir):
     result.stdout.fnmatch_lines(
         [
             "collected 2 items",
-            "<Package */tests'>",
-            "  <Module '__init__.py'>",
-            "    <Function 'test_init'>",
-            "  <Module 'test_foo.py'>",
-            "    <Function 'test_foo'>",
+            "<Package */tests>",
+            "  <Module __init__.py>",
+            "    <Function test_init>",
+            "  <Module test_foo.py>",
+            "    <Function test_foo>",
         ]
     )
     result = testdir.runpytest("./tests/test_foo.py", "--collect-only")
     result.stdout.fnmatch_lines(
-        ["<Package */tests'>", "  <Module 'test_foo.py'>", "    <Function 'test_foo'>"]
+        ["<Package */tests>", "  <Module test_foo.py>", "    <Function test_foo>"]
     )
     assert "test_init" not in result.stdout.str()
     result = testdir.runpytest("./tests/__init__.py", "--collect-only")
     result.stdout.fnmatch_lines(
-        ["<Package */tests'>", "  <Module '__init__.py'>", "    <Function 'test_init'>"]
+        ["<Package */tests>", "  <Module __init__.py>", "    <Function test_init>"]
     )
     assert "test_foo" not in result.stdout.str()
 
@@ -1051,7 +1052,65 @@ def test_collect_handles_raising_on_dunder_class(testdir):
     """
     )
     result = testdir.runpytest()
+    result.stdout.fnmatch_lines(["*1 passed in*"])
     assert result.ret == 0
+
+
+def test_collect_with_chdir_during_import(testdir):
+    subdir = testdir.tmpdir.mkdir("sub")
+    testdir.tmpdir.join("conftest.py").write(
+        textwrap.dedent(
+            """
+            import os
+            os.chdir(%r)
+            """
+            % (str(subdir),)
+        )
+    )
+    testdir.makepyfile(
+        """
+        def test_1():
+            import os
+            assert os.getcwd() == %r
+        """
+        % (str(subdir),)
+    )
+    with testdir.tmpdir.as_cwd():
+        result = testdir.runpytest()
+    result.stdout.fnmatch_lines(["*1 passed in*"])
+    assert result.ret == 0
+
+    # Handles relative testpaths.
+    testdir.makeini(
+        """
+        [pytest]
+        testpaths = .
+    """
+    )
+    with testdir.tmpdir.as_cwd():
+        result = testdir.runpytest("--collect-only")
+    result.stdout.fnmatch_lines(["collected 1 item"])
+
+
+def test_collect_pyargs_with_testpaths(testdir, monkeypatch):
+    testmod = testdir.mkdir("testmod")
+    # NOTE: __init__.py is not collected since it does not match python_files.
+    testmod.ensure("__init__.py").write("def test_func(): pass")
+    testmod.ensure("test_file.py").write("def test_func(): pass")
+
+    root = testdir.mkdir("root")
+    root.ensure("pytest.ini").write(
+        textwrap.dedent(
+            """
+        [pytest]
+        addopts = --pyargs
+        testpaths = testmod
+    """
+        )
+    )
+    monkeypatch.setenv("PYTHONPATH", str(testdir.tmpdir))
+    with root.as_cwd():
+        result = testdir.runpytest_subprocess()
     result.stdout.fnmatch_lines(["*1 passed in*"])
 
 
@@ -1105,3 +1164,72 @@ def test_collect_symlink_out_of_tree(testdir):
         ]
     )
     assert result.ret == 0
+
+
+def test_collectignore_via_conftest(testdir, monkeypatch):
+    """collect_ignore in parent conftest skips importing child (issue #4592)."""
+    tests = testdir.mkpydir("tests")
+    tests.ensure("conftest.py").write("collect_ignore = ['ignore_me']")
+
+    ignore_me = tests.mkdir("ignore_me")
+    ignore_me.ensure("__init__.py")
+    ignore_me.ensure("conftest.py").write("assert 0, 'should_not_be_called'")
+
+    result = testdir.runpytest()
+    assert result.ret == EXIT_NOTESTSCOLLECTED
+
+
+def test_collect_pkg_init_and_file_in_args(testdir):
+    subdir = testdir.mkdir("sub")
+    init = subdir.ensure("__init__.py")
+    init.write("def test_init(): pass")
+    p = subdir.ensure("test_file.py")
+    p.write("def test_file(): pass")
+
+    # NOTE: without "-o python_files=*.py" this collects test_file.py twice.
+    # This changed/broke with "Add package scoped fixtures #2283" (2b1410895)
+    # initially (causing a RecursionError).
+    result = testdir.runpytest("-v", str(init), str(p))
+    result.stdout.fnmatch_lines(
+        [
+            "sub/test_file.py::test_file PASSED*",
+            "sub/test_file.py::test_file PASSED*",
+            "*2 passed in*",
+        ]
+    )
+
+    result = testdir.runpytest("-v", "-o", "python_files=*.py", str(init), str(p))
+    result.stdout.fnmatch_lines(
+        [
+            "sub/__init__.py::test_init PASSED*",
+            "sub/test_file.py::test_file PASSED*",
+            "*2 passed in*",
+        ]
+    )
+
+
+@pytest.mark.skipif(
+    not hasattr(py.path.local, "mksymlinkto"),
+    reason="symlink not available on this platform",
+)
+@pytest.mark.parametrize("use_pkg", (True, False))
+def test_collect_sub_with_symlinks(use_pkg, testdir):
+    sub = testdir.mkdir("sub")
+    if use_pkg:
+        sub.ensure("__init__.py")
+    sub.ensure("test_file.py").write("def test_file(): pass")
+
+    # Create a broken symlink.
+    sub.join("test_broken.py").mksymlinkto("test_doesnotexist.py")
+
+    # Symlink that gets collected.
+    sub.join("test_symlink.py").mksymlinkto("test_file.py")
+
+    result = testdir.runpytest("-v", str(sub))
+    result.stdout.fnmatch_lines(
+        [
+            "sub/test_file.py::test_file PASSED*",
+            "sub/test_symlink.py::test_file PASSED*",
+            "*2 passed in*",
+        ]
+    )

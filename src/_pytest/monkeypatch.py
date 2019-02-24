@@ -13,8 +13,9 @@ import six
 
 import pytest
 from _pytest.fixtures import fixture
+from _pytest.pathlib import Path
 
-RE_IMPORT_ERROR_NAME = re.compile("^No module named (.*)$")
+RE_IMPORT_ERROR_NAME = re.compile(r"^No module named (.*)$")
 
 
 @fixture
@@ -180,6 +181,8 @@ class MonkeyPatch(object):
         attribute is missing.
         """
         __tracebackhide__ = True
+        import inspect
+
         if name is notset:
             if not isinstance(target, six.string_types):
                 raise TypeError(
@@ -193,7 +196,11 @@ class MonkeyPatch(object):
             if raising:
                 raise AttributeError(name)
         else:
-            self._setattr.append((target, name, getattr(target, name, notset)))
+            oldval = getattr(target, name, notset)
+            # Avoid class descriptors like staticmethod/classmethod.
+            if inspect.isclass(target):
+                oldval = target.__dict__.get(name, notset)
+            self._setattr.append((target, name, oldval))
             delattr(target, name)
 
     def setitem(self, dic, name, value):
@@ -267,6 +274,9 @@ class MonkeyPatch(object):
             self._cwd = os.getcwd()
         if hasattr(path, "chdir"):
             path.chdir()
+        elif isinstance(path, Path):
+            # modern python uses the fspath protocol here LEGACY
+            os.chdir(str(path))
         else:
             os.chdir(path)
 

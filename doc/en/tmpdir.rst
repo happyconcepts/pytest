@@ -35,11 +35,14 @@ created in the `base temporary directory`_.
         assert 0
 
 Running this would result in a passed test except for the last
-``assert 0`` line which we use to look at values::
+``assert 0`` line which we use to look at values:
+
+.. code-block:: pytest
 
     $ pytest test_tmp_path.py
     =========================== test session starts ============================
-    platform linux -- Python 3.x.y, pytest-3.x.y, py-1.x.y, pluggy-0.x.y
+    platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+    cachedir: $PYTHON_PREFIX/.pytest_cache
     rootdir: $REGENDOC_TMPDIR, inifile:
     collected 1 item
 
@@ -95,11 +98,14 @@ and more.  Here is an example test usage::
         assert 0
 
 Running this would result in a passed test except for the last
-``assert 0`` line which we use to look at values::
+``assert 0`` line which we use to look at values:
+
+.. code-block:: pytest
 
     $ pytest test_tmpdir.py
     =========================== test session starts ============================
-    platform linux -- Python 3.x.y, pytest-3.x.y, py-1.x.y, pluggy-0.x.y
+    platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+    cachedir: $PYTHON_PREFIX/.pytest_cache
     rootdir: $REGENDOC_TMPDIR, inifile:
     collected 1 item
 
@@ -168,7 +174,9 @@ the system temporary directory.  The base name will be ``pytest-NUM`` where
 ``NUM`` will be incremented with each test run.  Moreover, entries older
 than 3 temporary directories will be removed.
 
-You can override the default temporary directory setting like this::
+You can override the default temporary directory setting like this:
+
+.. code-block:: bash
 
     pytest --basetemp=mydir
 

@@ -75,38 +75,50 @@ class pytestPDB(object):
     _config = None
     _pdb_cls = pdb.Pdb
     _saved = []
+    _recursive_debug = 0
 
     @classmethod
-    def set_trace(cls, set_break=True):
-        """ invoke PDB set_trace debugging, dropping any IO capturing. """
+    def _init_pdb(cls, *args, **kwargs):
+        """ Initialize PDB debugging, dropping any IO capturing. """
         import _pytest.config
 
-        frame = sys._getframe().f_back
         if cls._pluginmanager is not None:
             capman = cls._pluginmanager.getplugin("capturemanager")
             if capman:
                 capman.suspend_global_capture(in_=True)
             tw = _pytest.config.create_terminal_writer(cls._config)
             tw.line()
-            if capman and capman.is_globally_capturing():
-                tw.sep(">", "PDB set_trace (IO-capturing turned off)")
-            else:
-                tw.sep(">", "PDB set_trace")
+            if cls._recursive_debug == 0:
+                # Handle header similar to pdb.set_trace in py37+.
+                header = kwargs.pop("header", None)
+                if header is not None:
+                    tw.sep(">", header)
+                elif capman and capman.is_globally_capturing():
+                    tw.sep(">", "PDB set_trace (IO-capturing turned off)")
+                else:
+                    tw.sep(">", "PDB set_trace")
 
             class _PdbWrapper(cls._pdb_cls, object):
                 _pytest_capman = capman
                 _continued = False
+
+                def do_debug(self, arg):
+                    cls._recursive_debug += 1
+                    ret = super(_PdbWrapper, self).do_debug(arg)
+                    cls._recursive_debug -= 1
+                    return ret
 
                 def do_continue(self, arg):
                     ret = super(_PdbWrapper, self).do_continue(arg)
                     if self._pytest_capman:
                         tw = _pytest.config.create_terminal_writer(cls._config)
                         tw.line()
-                        if self._pytest_capman.is_globally_capturing():
-                            tw.sep(">", "PDB continue (IO-capturing resumed)")
-                        else:
-                            tw.sep(">", "PDB continue")
-                        self._pytest_capman.resume_global_capture()
+                        if cls._recursive_debug == 0:
+                            if self._pytest_capman.is_globally_capturing():
+                                tw.sep(">", "PDB continue (IO-capturing resumed)")
+                            else:
+                                tw.sep(">", "PDB continue")
+                            self._pytest_capman.resume_global_capture()
                     cls._pluginmanager.hook.pytest_leave_pdb(
                         config=cls._config, pdb=self
                     )
@@ -114,6 +126,10 @@ class pytestPDB(object):
                     return ret
 
                 do_c = do_cont = do_continue
+
+                def set_quit(self):
+                    super(_PdbWrapper, self).set_quit()
+                    outcomes.exit("Quitting debugger")
 
                 def setup(self, f, tb):
                     """Suspend on setup().
@@ -129,13 +145,18 @@ class pytestPDB(object):
                             self._pytest_capman.suspend_global_capture(in_=True)
                     return ret
 
-            _pdb = _PdbWrapper()
+            _pdb = _PdbWrapper(**kwargs)
             cls._pluginmanager.hook.pytest_enter_pdb(config=cls._config, pdb=_pdb)
         else:
-            _pdb = cls._pdb_cls()
+            _pdb = cls._pdb_cls(**kwargs)
+        return _pdb
 
-        if set_break:
-            _pdb.set_trace(frame)
+    @classmethod
+    def set_trace(cls, *args, **kwargs):
+        """Invoke debugging via ``Pdb.set_trace``, dropping any IO capturing."""
+        frame = sys._getframe().f_back
+        _pdb = cls._init_pdb(*args, **kwargs)
+        _pdb.set_trace(frame)
 
 
 class PdbInvoke(object):
@@ -161,9 +182,9 @@ class PdbTrace(object):
 
 
 def _test_pytest_function(pyfuncitem):
-    pytestPDB.set_trace(set_break=False)
+    _pdb = pytestPDB._init_pdb()
     testfunction = pyfuncitem.obj
-    pyfuncitem.obj = pdb.runcall
+    pyfuncitem.obj = _pdb.runcall
     if pyfuncitem._isyieldedfunction():
         arg_list = list(pyfuncitem._args)
         arg_list.insert(0, testfunction)
@@ -202,8 +223,7 @@ def _enter_pdb(node, excinfo, rep):
     tw.sep(">", "entering PDB")
     tb = _postmortem_traceback(excinfo)
     rep._pdbshown = True
-    if post_mortem(tb):
-        outcomes.exit("Quitting debugger")
+    post_mortem(tb)
     return rep
 
 
@@ -234,4 +254,5 @@ def post_mortem(t):
     p = Pdb()
     p.reset()
     p.interaction(None, t)
-    return p.quitting
+    if p.quitting:
+        outcomes.exit("Quitting debugger")

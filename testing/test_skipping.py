@@ -770,6 +770,7 @@ def test_skip_reasons_folding():
 
     # ev3 might be a collection report
     ev3 = X()
+    ev3.when = "collect"
     ev3.longrepr = longrepr
     ev3.skipped = True
 
@@ -875,11 +876,22 @@ def test_reportchars_all(testdir):
             pass
         def test_4():
             pytest.skip("four")
+        @pytest.fixture
+        def fail():
+            assert 0
+        def test_5(fail):
+            pass
     """
     )
     result = testdir.runpytest("-ra")
     result.stdout.fnmatch_lines(
-        ["FAIL*test_1*", "SKIP*four*", "XFAIL*test_2*", "XPASS*test_3*"]
+        [
+            "SKIP*four*",
+            "XFAIL*test_2*",
+            "XPASS*test_3*",
+            "ERROR*test_5*",
+            "FAIL*test_1*",
+        ]
     )
 
 
@@ -898,7 +910,6 @@ def test_reportchars_all_error(testdir):
     result.stdout.fnmatch_lines(["ERROR*test_foo*"])
 
 
-@pytest.mark.xfail("hasattr(sys, 'pypy_version_info')")
 def test_errors_in_xfail_skip_expressions(testdir):
     testdir.makepyfile(
         """
@@ -919,6 +930,10 @@ def test_errors_in_xfail_skip_expressions(testdir):
     if sys.platform.startswith("java"):
         # XXX report this to java
         markline = "*" + markline[8:]
+    elif hasattr(sys, "pypy_version_info") and sys.pypy_version_info < (6,):
+        markline = markline[5:]
+    elif sys.version_info >= (3, 8) or hasattr(sys, "pypy_version_info"):
+        markline = markline[4:]
     result.stdout.fnmatch_lines(
         [
             "*ERROR*test_nameerror*",
@@ -1191,6 +1206,6 @@ def test_summary_list_after_errors(testdir):
         [
             "=* FAILURES *=",
             "*= short test summary info =*",
-            "FAIL test_summary_list_after_errors.py::test_fail",
+            "FAILED test_summary_list_after_errors.py::test_fail",
         ]
     )
