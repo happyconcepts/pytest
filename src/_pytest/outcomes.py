@@ -2,11 +2,9 @@
 exception classes and constants handling test outcomes
 as well as functions creating them
 """
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import sys
+
+from packaging.version import Version
 
 
 class OutcomeException(BaseException):
@@ -15,17 +13,20 @@ class OutcomeException(BaseException):
     """
 
     def __init__(self, msg=None, pytrace=True):
+        if msg is not None and not isinstance(msg, str):
+            error_msg = (
+                "{} expected string as 'msg' parameter, got '{}' instead.\n"
+                "Perhaps you meant to use a mark?"
+            )
+            raise TypeError(error_msg.format(type(self).__name__, type(msg).__name__))
         BaseException.__init__(self, msg)
         self.msg = msg
         self.pytrace = pytrace
 
     def __repr__(self):
         if self.msg:
-            val = self.msg
-            if isinstance(val, bytes):
-                val = val.decode("UTF-8", errors="replace")
-            return val
-        return "<%s instance>" % (self.__class__.__name__,)
+            return self.msg
+        return "<{} instance>".format(self.__class__.__name__)
 
     __str__ = __repr__
 
@@ -55,7 +56,7 @@ class Exit(Exception):
     def __init__(self, msg="unknown reason", returncode=None):
         self.msg = msg
         self.returncode = returncode
-        super(Exit, self).__init__(msg)
+        super().__init__(msg)
 
 
 # exposed helper methods
@@ -72,15 +73,17 @@ def exit(msg, returncode=None):
     raise Exit(msg, returncode)
 
 
-exit.Exception = Exit
+# Ignore type because of https://github.com/python/mypy/issues/2087.
+exit.Exception = Exit  # type: ignore
 
 
-def skip(msg="", **kwargs):
+def skip(msg="", *, allow_module_level=False):
     """
     Skip an executing test with the given message.
 
     This function should be called only during testing (setup, call or teardown) or
-    during collection by using the ``allow_module_level`` flag.
+    during collection by using the ``allow_module_level`` flag.  This function can
+    be called in doctests as well.
 
     :kwarg bool allow_module_level: allows this function to be called at
         module level, skipping the rest of the module. Default to False.
@@ -89,16 +92,16 @@ def skip(msg="", **kwargs):
         It is better to use the :ref:`pytest.mark.skipif ref` marker when possible to declare a test to be
         skipped under certain conditions like mismatching platforms or
         dependencies.
+        Similarly, use the ``# doctest: +SKIP`` directive (see `doctest.SKIP
+        <https://docs.python.org/3/library/doctest.html#doctest.SKIP>`_)
+        to skip a doctest statically.
     """
     __tracebackhide__ = True
-    allow_module_level = kwargs.pop("allow_module_level", False)
-    if kwargs:
-        keys = [k for k in kwargs.keys()]
-        raise TypeError("unexpected keyword arguments: {}".format(keys))
     raise Skipped(msg=msg, allow_module_level=allow_module_level)
 
 
-skip.Exception = Skipped
+# Ignore type because of https://github.com/python/mypy/issues/2087.
+skip.Exception = Skipped  # type: ignore
 
 
 def fail(msg="", pytrace=True):
@@ -113,10 +116,11 @@ def fail(msg="", pytrace=True):
     raise Failed(msg=msg, pytrace=pytrace)
 
 
-fail.Exception = Failed
+# Ignore type because of https://github.com/python/mypy/issues/2087.
+fail.Exception = Failed  # type: ignore
 
 
-class XFailed(fail.Exception):
+class XFailed(Failed):
     """ raised from an explicit call to pytest.xfail() """
 
 
@@ -134,7 +138,8 @@ def xfail(reason=""):
     raise XFailed(reason)
 
 
-xfail.Exception = XFailed
+# Ignore type because of https://github.com/python/mypy/issues/2087.
+xfail.Exception = XFailed  # type: ignore
 
 
 def importorskip(modname, minversion=None, reason=None):
@@ -151,7 +156,6 @@ def importorskip(modname, minversion=None, reason=None):
 
     __tracebackhide__ = True
     compile(modname, "", "eval")  # to catch syntaxerrors
-    should_skip = False
 
     with warnings.catch_warnings():
         # make sure to ignore ImportWarnings that might happen because
@@ -160,27 +164,16 @@ def importorskip(modname, minversion=None, reason=None):
         warnings.simplefilter("ignore")
         try:
             __import__(modname)
-        except ImportError:
-            # Do not raise chained exception here(#1485)
-            should_skip = True
-    if should_skip:
-        if reason is None:
-            reason = "could not import %r" % (modname,)
-        raise Skipped(reason, allow_module_level=True)
+        except ImportError as exc:
+            if reason is None:
+                reason = "could not import {!r}: {}".format(modname, exc)
+            raise Skipped(reason, allow_module_level=True) from None
     mod = sys.modules[modname]
     if minversion is None:
         return mod
     verattr = getattr(mod, "__version__", None)
     if minversion is not None:
-        try:
-            from pkg_resources import parse_version as pv
-        except ImportError:
-            raise Skipped(
-                "we have a required version for %r but can not import "
-                "pkg_resources to parse version strings." % (modname,),
-                allow_module_level=True,
-            )
-        if verattr is None or pv(verattr) < pv(minversion):
+        if verattr is None or Version(verattr) < Version(minversion):
             raise Skipped(
                 "module %r has __version__ %r, required is: %r"
                 % (modname, verattr, minversion),

@@ -32,8 +32,17 @@ def getcfg(args, config=None):
             for inibasename in inibasenames:
                 p = base.join(inibasename)
                 if exists(p):
-                    iniconfig = py.iniconfig.IniConfig(p)
-                    if "pytest" in iniconfig.sections:
+                    try:
+                        iniconfig = py.iniconfig.IniConfig(p)
+                    except py.iniconfig.ParseError as exc:
+                        raise UsageError(str(exc))
+
+                    if (
+                        inibasename == "setup.cfg"
+                        and "tool:pytest" in iniconfig.sections
+                    ):
+                        return base, p, iniconfig["tool:pytest"]
+                    elif "pytest" in iniconfig.sections:
                         if inibasename == "setup.cfg" and config is not None:
 
                             fail(
@@ -41,11 +50,6 @@ def getcfg(args, config=None):
                                 pytrace=False,
                             )
                         return base, p, iniconfig["pytest"]
-                    if (
-                        inibasename == "setup.cfg"
-                        and "tool:pytest" in iniconfig.sections
-                    ):
-                        return base, p, iniconfig["tool:pytest"]
                     elif inibasename == "pytest.ini":
                         # allowed to be empty
                         return base, p, {}

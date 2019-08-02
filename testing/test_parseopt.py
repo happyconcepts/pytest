@@ -1,7 +1,3 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import argparse
 import distutils.spawn
 import os
@@ -19,7 +15,7 @@ def parser():
     return parseopt.Parser()
 
 
-class TestParser(object):
+class TestParser:
     def test_no_help_by_default(self):
         parser = parseopt.Parser(usage="xyz")
         pytest.raises(UsageError, lambda: parser.parse(["-h"]))
@@ -156,7 +152,7 @@ class TestParser(object):
         parser.addoption("--hello", dest="hello", action="store")
         parser.addoption("--world", dest="world", default=42)
 
-        class A(object):
+        class A:
             pass
 
         option = A()
@@ -204,7 +200,7 @@ class TestParser(object):
 
     def test_drop_short_helper(self):
         parser = argparse.ArgumentParser(
-            formatter_class=parseopt.DropShorterLongHelpFormatter
+            formatter_class=parseopt.DropShorterLongHelpFormatter, allow_abbrev=False
         )
         parser.add_argument(
             "-t", "--twoword", "--duo", "--two-word", "--two", help="foo"
@@ -243,10 +239,8 @@ class TestParser(object):
         parser.addoption("--funcarg", "--func-arg", action="store_true")
         parser.addoption("--abc-def", "--abc-def", action="store_true")
         parser.addoption("--klm-hij", action="store_true")
-        args = parser.parse(["--funcarg", "--k"])
-        assert args.funcarg is True
-        assert args.abc_def is False
-        assert args.klm_hij is True
+        with pytest.raises(UsageError):
+            parser.parse(["--funcarg", "--k"])
 
     def test_drop_short_2(self, parser):
         parser.addoption("--func-arg", "--doit", action="store_true")
@@ -299,15 +293,12 @@ def test_argcomplete(testdir, monkeypatch):
     if not distutils.spawn.find_executable("bash"):
         pytest.skip("bash not available")
     script = str(testdir.tmpdir.join("test_argcomplete"))
-    pytest_bin = sys.argv[0]
-    if "pytest" not in os.path.basename(pytest_bin):
-        pytest.skip("need to be run with pytest executable, not {}".format(pytest_bin))
 
     with open(str(script), "w") as fp:
         # redirect output from argcomplete to stdin and stderr is not trivial
         # http://stackoverflow.com/q/12589419/1307905
         # so we use bash
-        fp.write('COMP_WORDBREAKS="$COMP_WORDBREAKS" %s 8>&1 9>&2' % pytest_bin)
+        fp.write('COMP_WORDBREAKS="$COMP_WORDBREAKS" python -m pytest 8>&1 9>&2')
     # alternative would be exteneded Testdir.{run(),_run(),popen()} to be able
     # to handle a keyword argument env that replaces os.environ in popen or
     # extends the copy, advantage: could not forget to restore
@@ -323,7 +314,11 @@ def test_argcomplete(testdir, monkeypatch):
         # argcomplete not found
         pytest.skip("argcomplete not available")
     elif not result.stdout.str():
-        pytest.skip("bash provided no output, argcomplete not available?")
+        pytest.skip(
+            "bash provided no output on stdout, argcomplete not available? (stderr={!r})".format(
+                result.stderr.str()
+            )
+        )
     else:
         result.stdout.fnmatch_lines(["--funcargs", "--fulltrace"])
     os.mkdir("test_argcomplete.d")

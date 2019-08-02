@@ -1,6 +1,5 @@
-
-Reference
-=========
+API Reference
+=============
 
 This page contains the full reference to pytest's API.
 
@@ -49,7 +48,7 @@ pytest.main
 .. autofunction:: _pytest.config.main
 
 pytest.param
-~~~~~~~~~~~~~
+~~~~~~~~~~~~
 
 .. autofunction:: pytest.param(*values, [id], [marks])
 
@@ -199,16 +198,18 @@ Marks a test function as *expected to fail*.
 .. py:function:: pytest.mark.xfail(condition=None, *, reason=None, raises=None, run=True, strict=False)
 
     :type condition: bool or str
-    :param condition: ``True/False`` if the condition should be marked as xfail or a :ref:`condition string <string conditions>`.
+    :param condition:
+        Condition for marking the test function as xfail (``True/False`` or a
+        :ref:`condition string <string conditions>`).
     :keyword str reason: Reason why the test function is marked as xfail.
     :keyword Exception raises: Exception subclass expected to be raised by the test function; other exceptions will fail the test.
     :keyword bool run:
         If the test function should actually be executed. If ``False``, the function will always xfail and will
-        not be executed (useful a function is segfaulting).
+        not be executed (useful if a function is segfaulting).
     :keyword bool strict:
         * If ``False`` (the default) the function will be shown in the terminal output as ``xfailed`` if it fails
           and as ``xpass`` if it passes. In both cases this will not cause the test suite to fail as a whole. This
-          is particularly useful to mark *flaky* tests (tests that random at fail) to be tackled later.
+          is particularly useful to mark *flaky* tests (tests that fail at random) to be tackled later.
         * If ``True``, the function will be shown in the terminal output as ``xfailed`` if it fails, but if it
           unexpectedly passes then it will **fail** the test suite. This is particularly useful to mark functions
           that are always failing and there should be a clear indication if they unexpectedly start to pass (for example
@@ -423,6 +424,14 @@ record_property
 
 .. autofunction:: _pytest.junitxml.record_property()
 
+
+record_testsuite_property
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Tutorial**: :ref:`record_testsuite_property example`.
+
+.. autofunction:: _pytest.junitxml.record_testsuite_property()
+
 caplog
 ~~~~~~
 
@@ -499,6 +508,32 @@ Each recorded warning is an instance of :class:`warnings.WarningMessage`.
     differently; see :ref:`ensuring_function_triggers`.
 
 
+tmp_path
+~~~~~~~~
+
+**Tutorial**: :doc:`tmpdir`
+
+.. currentmodule:: _pytest.tmpdir
+
+.. autofunction:: tmp_path()
+    :no-auto-options:
+
+
+tmp_path_factory
+~~~~~~~~~~~~~~~~
+
+**Tutorial**: :ref:`tmp_path_factory example`
+
+.. _`tmp_path_factory factory api`:
+
+``tmp_path_factory`` instances have the following methods:
+
+.. currentmodule:: _pytest.tmpdir
+
+.. automethod:: TempPathFactory.mktemp
+.. automethod:: TempPathFactory.getbasetemp
+
+
 tmpdir
 ~~~~~~
 
@@ -546,6 +581,8 @@ Bootstrapping hooks called for plugins registered early enough (internal and set
 .. autofunction:: pytest_cmdline_parse
 .. autofunction:: pytest_cmdline_main
 
+.. _`initialization-hooks`:
+
 Initialization hooks
 ~~~~~~~~~~~~~~~~~~~~
 
@@ -557,6 +594,8 @@ Initialization hooks called for plugins and ``conftest.py`` files.
 .. autofunction:: pytest_unconfigure
 .. autofunction:: pytest_sessionstart
 .. autofunction:: pytest_sessionfinish
+
+.. autofunction:: pytest_plugin_registered
 
 Test running hooks
 ~~~~~~~~~~~~~~~~~~
@@ -581,6 +620,8 @@ into interactive debugging when a test failure occurs.
 The :py:mod:`_pytest.terminal` reported specifically uses
 the reporting hook to print information about a test run.
 
+.. autofunction:: pytest_pyfunc_call
+
 Collection hooks
 ~~~~~~~~~~~~~~~~
 
@@ -590,6 +631,7 @@ Collection hooks
 .. autofunction:: pytest_ignore_collect
 .. autofunction:: pytest_collect_directory
 .. autofunction:: pytest_collect_file
+.. autofunction:: pytest_pycollect_makemodule
 
 For influencing the collection of objects in Python modules
 you can use the following hook:
@@ -603,12 +645,15 @@ items, delete or otherwise amend the test items:
 
 .. autofunction:: pytest_collection_modifyitems
 
+.. autofunction:: pytest_collection_finish
+
 Reporting hooks
 ~~~~~~~~~~~~~~~
 
 Session related reporting hooks:
 
 .. autofunction:: pytest_collectstart
+.. autofunction:: pytest_make_collect_report
 .. autofunction:: pytest_itemcollected
 .. autofunction:: pytest_collectreport
 .. autofunction:: pytest_deselected
@@ -620,15 +665,14 @@ Session related reporting hooks:
 .. autofunction:: pytest_fixture_post_finalizer
 .. autofunction:: pytest_warning_captured
 
-And here is the central hook for reporting about
-test execution:
+Central hook for reporting about test execution:
 
 .. autofunction:: pytest_runtest_logreport
 
-You can also use this hook to customize assertion representation for some
-types:
+Assertion related hooks:
 
 .. autofunction:: pytest_assertrepr_compare
+.. autofunction:: pytest_assertion_pass
 
 
 Debugging/Interaction hooks
@@ -681,6 +725,14 @@ ExceptionInfo
 
 .. autoclass:: _pytest._code.ExceptionInfo
     :members:
+
+
+pytest.ExitCode
+~~~~~~~~~~~~~~~
+
+.. autoclass:: _pytest.main.ExitCode
+    :members:
+
 
 FixtureDef
 ~~~~~~~~~~
@@ -847,7 +899,7 @@ pytest_mark
 **Tutorial**: :ref:`scoped-marking`
 
 Can be declared at the **global** level in *test modules* to apply one or more :ref:`marks <marks ref>` to all
-test functions and methods. Can be either a single mark or a sequence of marks.
+test functions and methods. Can be either a single mark or a list of marks.
 
 .. code-block:: python
 
@@ -860,7 +912,7 @@ test functions and methods. Can be either a single mark or a sequence of marks.
 
     import pytest
 
-    pytestmark = (pytest.mark.integration, pytest.mark.slow)
+    pytestmark = [pytest.mark.integration, pytest.mark.slow]
 
 PYTEST_DONT_REWRITE (module docstring)
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -906,6 +958,14 @@ PYTEST_CURRENT_TEST
 This is not meant to be set by users, but is set by pytest internally with the name of the current test so other
 processes can inspect it, see :ref:`pytest current test env` for more information.
 
+Exceptions
+----------
+
+UsageError
+~~~~~~~~~~
+
+.. autoclass:: _pytest.config.UsageError()
+
 
 .. _`ini options ref`:
 
@@ -948,7 +1008,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: cache_dir
 
-   .. versionadded:: 3.2
+
 
    Sets a directory where stores content of cache plugin. Default directory is
    ``.pytest_cache`` which is created in :ref:`rootdir <rootdir>`. Directory may be
@@ -968,7 +1028,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: console_output_style
 
-   .. versionadded:: 3.3
+
 
    Sets the console output style while running tests:
 
@@ -988,7 +1048,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: doctest_encoding
 
-   .. versionadded:: 3.1
+
 
    Default encoding to use to decode text files with docstrings.
    :doc:`See how pytest handles doctests <doctest>`.
@@ -1002,7 +1062,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: empty_parameter_set_mark
 
-    .. versionadded:: 3.4
+
 
     Allows to pick the action for empty parametersets in parameterization
 
@@ -1023,9 +1083,26 @@ passed multiple times. The expected format is ``name=value``. For example::
       for more details.
 
 
+.. confval:: faulthandler_timeout
+
+   Dumps the tracebacks of all threads if a test takes longer than ``X`` seconds to run (including
+   fixture setup and teardown). Implemented using the `faulthandler.dump_traceback_later`_ function,
+   so all caveats there apply.
+
+   .. code-block:: ini
+
+        # content of pytest.ini
+        [pytest]
+        faulthandler_timeout=5
+
+   For more information please refer to :ref:`faulthandler`.
+
+.. _`faulthandler.dump_traceback_later`: https://docs.python.org/3/library/faulthandler.html#faulthandler.dump_traceback_later
+
+
 .. confval:: filterwarnings
 
-   .. versionadded:: 3.1
+
 
    Sets a list of filters and actions that should be taken for matched
    warnings. By default all warnings emitted during the test session
@@ -1042,6 +1119,22 @@ passed multiple times. The expected format is ``name=value``. For example::
    This tells pytest to ignore deprecation warnings and turn all other warnings
    into errors. For more information please refer to :ref:`warnings`.
 
+
+.. confval:: junit_duration_report
+
+    .. versionadded:: 4.1
+
+    Configures how durations are recorded into the JUnit XML report:
+
+    * ``total`` (the default): duration times reported include setup, call, and teardown times.
+    * ``call``: duration times reported include only call times, excluding setup and teardown.
+
+    .. code-block:: ini
+
+        [pytest]
+        junit_duration_report = call
+
+
 .. confval:: junit_family
 
     .. versionadded:: 4.2
@@ -1057,9 +1150,34 @@ passed multiple times. The expected format is ``name=value``. For example::
         [pytest]
         junit_family = xunit2
 
-.. confval:: junit_suite_name
 
-    .. versionadded:: 3.1
+.. confval:: junit_logging
+
+    .. versionadded:: 3.5
+
+    Configures if stdout/stderr should be written to the JUnit XML file. Valid values are
+    ``system-out``, ``system-err``, and ``no`` (the default).
+
+    .. code-block:: ini
+
+        [pytest]
+        junit_logging = system-out
+
+
+.. confval:: junit_log_passing_tests
+
+    .. versionadded:: 4.6
+
+    If ``junit_logging != "no"``, configures if the captured output should be written
+    to the JUnit XML file for **passing** tests. Default is ``True``.
+
+    .. code-block:: ini
+
+        [pytest]
+        junit_log_passing_tests = False
+
+
+.. confval:: junit_suite_name
 
     To set the name of the root test suite xml item, you can configure the ``junit_suite_name`` option in your config file:
 
@@ -1071,7 +1189,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: log_cli_date_format
 
-    .. versionadded:: 3.3
+
 
     Sets a :py:func:`time.strftime`-compatible string that will be used when formatting dates for live logging.
 
@@ -1084,7 +1202,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: log_cli_format
 
-    .. versionadded:: 3.3
+
 
     Sets a :py:mod:`logging`-compatible string used to format live logging messages.
 
@@ -1098,7 +1216,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: log_cli_level
 
-    .. versionadded:: 3.3
+
 
     Sets the minimum log message level that should be captured for live logging. The integer value or
     the names of the levels can be used.
@@ -1113,7 +1231,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: log_date_format
 
-    .. versionadded:: 3.3
+
 
     Sets a :py:func:`time.strftime`-compatible string that will be used when formatting dates for logging capture.
 
@@ -1127,7 +1245,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: log_file
 
-    .. versionadded:: 3.3
+
 
     Sets a file name relative to the ``pytest.ini`` file where log messages should be written to, in addition
     to the other logging facilities that are active.
@@ -1142,7 +1260,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: log_file_date_format
 
-    .. versionadded:: 3.3
+
 
     Sets a :py:func:`time.strftime`-compatible string that will be used when formatting dates for the logging file.
 
@@ -1155,7 +1273,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: log_file_format
 
-    .. versionadded:: 3.3
+
 
     Sets a :py:mod:`logging`-compatible string used to format logging messages redirected to the logging file.
 
@@ -1168,7 +1286,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: log_file_level
 
-    .. versionadded:: 3.3
+
 
     Sets the minimum log message level that should be captured for the logging file. The integer value or
     the names of the levels can be used.
@@ -1183,7 +1301,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: log_format
 
-    .. versionadded:: 3.3
+
 
     Sets a :py:mod:`logging`-compatible string used to format captured logging messages.
 
@@ -1197,7 +1315,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: log_level
 
-    .. versionadded:: 3.3
+
 
     Sets the minimum log message level that should be captured for logging capture. The integer value or
     the names of the levels can be used.
@@ -1212,7 +1330,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: log_print
 
-    .. versionadded:: 3.3
+
 
     If set to ``False``, will disable displaying captured logging messages for failed tests.
 
@@ -1226,12 +1344,17 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: markers
 
-    List of markers that are allowed in test functions, enforced when ``--strict`` command-line argument is used.
-    You can use a marker name per line, indented from the option name.
+    When the ``--strict-markers`` or ``--strict`` command-line arguments are used,
+    only known markers - defined in code by core pytest or some plugin - are allowed.
+
+    You can list additional markers in this setting to add them to the whitelist,
+    in which case you probably want to add ``--strict-markers`` to ``addopts``
+    to avoid future regressions:
 
     .. code-block:: ini
 
         [pytest]
+        addopts = --strict-markers
         markers =
             slow
             serial
@@ -1346,7 +1469,7 @@ passed multiple times. The expected format is ``name=value``. For example::
 
 .. confval:: testpaths
 
-   .. versionadded:: 2.8
+
 
    Sets list of directories that should be searched for tests when
    no specific directories, files or test ids are given in the command line when

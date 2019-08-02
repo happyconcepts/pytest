@@ -3,7 +3,6 @@ from pluggy import HookspecMarker
 
 from _pytest.deprecated import PYTEST_LOGWARNING
 
-
 hookspec = HookspecMarker("pytest")
 
 # -------------------------------------------------------------------------
@@ -100,7 +99,8 @@ def pytest_cmdline_parse(pluginmanager, args):
     Stops at first non-None result, see :ref:`firstresult`
 
     .. note::
-        This hook will not be called for ``conftest.py`` files, only for setuptools plugins.
+        This hook will only be called for plugin classes passed to the ``plugins`` arg when using `pytest.main`_ to
+        perform an in-process test run.
 
     :param _pytest.config.PytestPluginManager pluginmanager: pytest plugin manager
     :param list[str] args: list of arguments passed on the command line
@@ -188,7 +188,7 @@ def pytest_ignore_collect(path, config):
 
     Stops at first non-None result, see :ref:`firstresult`
 
-    :param str path: the path to analyze
+    :param path: a :py:class:`py.path.local` - the path to analyze
     :param _pytest.config.Config config: pytest config object
     """
 
@@ -199,7 +199,7 @@ def pytest_collect_directory(path, parent):
 
     Stops at first non-None result, see :ref:`firstresult`
 
-    :param str path: the path to analyze
+    :param path: a :py:class:`py.path.local` - the path to analyze
     """
 
 
@@ -207,7 +207,7 @@ def pytest_collect_file(path, parent):
     """ return collection Node or None for the given path. Any new node
     needs to have the specified ``parent`` as a parent.
 
-    :param str path: the path to collect
+    :param path: a :py:class:`py.path.local` - the path to collect
     """
 
 
@@ -227,7 +227,7 @@ def pytest_collectreport(report):
 
 
 def pytest_deselected(items):
-    """ called for test items deselected by keyword. """
+    """ called for test items deselected, e.g. by keyword. """
 
 
 @hookspec(firstresult=True)
@@ -249,7 +249,10 @@ def pytest_pycollect_makemodule(path, parent):
     The pytest_collect_file hook needs to be used if you want to
     create test modules for files that do not match as a test module.
 
-    Stops at first non-None result, see :ref:`firstresult` """
+    Stops at first non-None result, see :ref:`firstresult`
+
+    :param path: a :py:class:`py.path.local` - the path of module to collect
+    """
 
 
 @hookspec(firstresult=True)
@@ -376,6 +379,41 @@ def pytest_runtest_logreport(report):
     the respective phase of executing a test. """
 
 
+@hookspec(firstresult=True)
+def pytest_report_to_serializable(config, report):
+    """
+    .. warning::
+        This hook is experimental and subject to change between pytest releases, even
+        bug fixes.
+
+        The intent is for this to be used by plugins maintained by the core-devs, such
+        as ``pytest-xdist``, ``pytest-subtests``, and as a replacement for the internal
+        'resultlog' plugin.
+
+        In the future it might become part of the public hook API.
+
+    Serializes the given report object into a data structure suitable for sending
+    over the wire, e.g. converted to JSON.
+    """
+
+
+@hookspec(firstresult=True)
+def pytest_report_from_serializable(config, data):
+    """
+    .. warning::
+        This hook is experimental and subject to change between pytest releases, even
+        bug fixes.
+
+        The intent is for this to be used by plugins maintained by the core-devs, such
+        as ``pytest-xdist``, ``pytest-subtests``, and as a replacement for the internal
+        'resultlog' plugin.
+
+        In the future it might become part of the public hook API.
+
+    Restores a report object previously serialized with pytest_report_to_serializable().
+    """
+
+
 # -------------------------------------------------------------------------
 # Fixture related hooks
 # -------------------------------------------------------------------------
@@ -444,6 +482,42 @@ def pytest_assertrepr_compare(config, op, left, right):
     be indented slightly, the intention is for the first line to be a summary.
 
     :param _pytest.config.Config config: pytest config object
+    """
+
+
+def pytest_assertion_pass(item, lineno, orig, expl):
+    """
+    **(Experimental)**
+
+    Hook called whenever an assertion *passes*.
+
+    Use this hook to do some processing after a passing assertion.
+    The original assertion information is available in the `orig` string
+    and the pytest introspected assertion information is available in the
+    `expl` string.
+
+    This hook must be explicitly enabled by the ``enable_assertion_pass_hook``
+    ini-file option:
+
+    .. code-block:: ini
+
+        [pytest]
+        enable_assertion_pass_hook=true
+
+    You need to **clean the .pyc** files in your project directory and interpreter libraries
+    when enabling this option, as assertions will require to be re-written.
+
+    :param _pytest.nodes.Item item: pytest item object of current test
+    :param int lineno: line number of the assert statement
+    :param string orig: string with original assertion
+    :param string expl: string with assert explanation
+
+    .. note::
+
+        This hook is **experimental**, so its parameters or even the hook itself might
+        be changed/removed without warning in any future pytest release.
+
+        If you find this hook useful, please share your feedback opening an issue.
     """
 
 

@@ -8,16 +8,19 @@ be removed when the time comes.
 All constants defined in this module should be either PytestWarning instances or UnformattedWarning
 in case of warnings which need to format their messages.
 """
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 from _pytest.warning_types import PytestDeprecationWarning
 from _pytest.warning_types import RemovedInPytest4Warning
 from _pytest.warning_types import UnformattedWarning
 
-
 YIELD_TESTS = "yield tests were removed in pytest 4.0 - {name} will be ignored"
+
+# set of plugins which have been integrated into the core; we use this list to ignore
+# them during registration to avoid conflicts
+DEPRECATED_EXTERNAL_PLUGINS = {
+    "pytest_catchlog",
+    "pytest_capturelog",
+    "pytest_faulthandler",
+}
 
 
 FIXTURE_FUNCTION_CALL = (
@@ -37,22 +40,21 @@ GETFUNCARGVALUE = RemovedInPytest4Warning(
     "getfuncargvalue is deprecated, use getfixturevalue"
 )
 
+FUNCARGNAMES = PytestDeprecationWarning(
+    "The `funcargnames` attribute was an alias for `fixturenames`, "
+    "since pytest 2.3 - use the newer attribute instead."
+)
+
 RAISES_MESSAGE_PARAMETER = PytestDeprecationWarning(
     "The 'message' parameter is deprecated.\n"
     "(did you mean to use `match='some regex'` to check the exception message?)\n"
-    "Please comment on https://github.com/pytest-dev/pytest/issues/3974 "
-    "if you have concerns about removal of this parameter."
+    "Please see:\n"
+    "  https://docs.pytest.org/en/4.6-maintenance/deprecations.html#message-parameter-of-pytest-raises"
 )
 
 RESULT_LOG = PytestDeprecationWarning(
-    "--result-log is deprecated and scheduled for removal in pytest 5.0.\n"
+    "--result-log is deprecated and scheduled for removal in pytest 6.0.\n"
     "See https://docs.pytest.org/en/latest/deprecations.html#result-log-result-log for more information."
-)
-
-MARK_INFO_ATTRIBUTE = RemovedInPytest4Warning(
-    "MarkInfo objects are deprecated as they contain merged marks which are hard to deal with correctly.\n"
-    "Please use node.get_closest_marker(name) or node.iter_markers(name).\n"
-    "Docs: https://docs.pytest.org/en/latest/mark.html#updating-code"
 )
 
 RAISES_EXEC = PytestDeprecationWarning(
@@ -92,5 +94,11 @@ PYTEST_LOGWARNING = PytestDeprecationWarning(
 PYTEST_WARNS_UNKNOWN_KWARGS = UnformattedWarning(
     PytestDeprecationWarning,
     "pytest.warns() got unexpected keyword arguments: {args!r}.\n"
+    "This will be an error in future versions.",
+)
+
+PYTEST_PARAM_UNKNOWN_KWARGS = UnformattedWarning(
+    PytestDeprecationWarning,
+    "pytest.param() got unexpected keyword arguments: {args!r}.\n"
     "This will be an error in future versions.",
 )

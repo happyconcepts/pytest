@@ -10,7 +10,7 @@ Usage and Invocations
 Calling pytest through ``python -m pytest``
 -----------------------------------------------------
 
-.. versionadded:: 2.0
+
 
 You can invoke testing through the Python interpreter from the command line:
 
@@ -32,6 +32,8 @@ Running ``pytest`` can result in six different exit codes:
 :Exit code 3: Internal error happened while executing tests
 :Exit code 4: pytest command line usage error
 :Exit code 5: No tests were collected
+
+They are represented by the :class:`_pytest.main.ExitCode` enum.
 
 Getting help on version, option names, environment variables
 --------------------------------------------------------------
@@ -155,7 +157,7 @@ option you make sure a trace is shown.
 Detailed summary report
 -----------------------
 
-.. versionadded:: 2.9
+
 
 The ``-r`` flag can be used to display a "short test summary info" at the end of the test session,
 making it easy in large test suites to get a clear picture of all failures, skips, xfails, etc.
@@ -202,9 +204,9 @@ Example:
 
     $ pytest -ra
     =========================== test session starts ============================
-    platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+    platform linux -- Python 3.x.y, pytest-5.x.y, py-1.x.y, pluggy-0.x.y
     cachedir: $PYTHON_PREFIX/.pytest_cache
-    rootdir: $REGENDOC_TMPDIR, inifile:
+    rootdir: $REGENDOC_TMPDIR
     collected 6 items
 
     test_example.py .FEsxX                                               [100%]
@@ -231,11 +233,12 @@ Example:
     XFAIL test_example.py::test_xfail
       reason: xfailing this test
     XPASS test_example.py::test_xpass always xfail
-    ERROR test_example.py::test_error
-    FAILED test_example.py::test_fail
-     1 failed, 1 passed, 1 skipped, 1 xfailed, 1 xpassed, 1 error in 0.12 seconds
+    ERROR test_example.py::test_error - assert 0
+    FAILED test_example.py::test_fail - assert 0
+    = 1 failed, 1 passed, 1 skipped, 1 xfailed, 1 xpassed, 1 error in 0.12 seconds =
 
-The ``-r`` options accepts a number of characters after it, with ``a`` used above meaning "all except passes".
+The ``-r`` options accepts a number of characters after it, with ``a`` used
+above meaning "all except passes".
 
 Here is the full list of available characters that can be used:
 
@@ -247,6 +250,7 @@ Here is the full list of available characters that can be used:
  - ``p`` - passed
  - ``P`` - passed with output
  - ``a`` - all except ``pP``
+ - ``A`` - all
 
 More than one character can be used, so for example to only see failed and skipped tests, you can execute:
 
@@ -254,9 +258,9 @@ More than one character can be used, so for example to only see failed and skipp
 
     $ pytest -rfs
     =========================== test session starts ============================
-    platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+    platform linux -- Python 3.x.y, pytest-5.x.y, py-1.x.y, pluggy-0.x.y
     cachedir: $PYTHON_PREFIX/.pytest_cache
-    rootdir: $REGENDOC_TMPDIR, inifile:
+    rootdir: $REGENDOC_TMPDIR
     collected 6 items
 
     test_example.py .FEsxX                                               [100%]
@@ -279,9 +283,9 @@ More than one character can be used, so for example to only see failed and skipp
 
     test_example.py:14: AssertionError
     ========================= short test summary info ==========================
-    FAILED test_example.py::test_fail
+    FAILED test_example.py::test_fail - assert 0
     SKIPPED [1] $REGENDOC_TMPDIR/test_example.py:23: skipping this test
-     1 failed, 1 passed, 1 skipped, 1 xfailed, 1 xpassed, 1 error in 0.12 seconds
+    = 1 failed, 1 passed, 1 skipped, 1 xfailed, 1 xpassed, 1 error in 0.12 seconds =
 
 Using ``p`` lists the passing tests, whilst ``P`` adds an extra section "PASSES" with those tests that passed but had
 captured output:
@@ -290,9 +294,9 @@ captured output:
 
     $ pytest -rpP
     =========================== test session starts ============================
-    platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+    platform linux -- Python 3.x.y, pytest-5.x.y, py-1.x.y, pluggy-0.x.y
     cachedir: $PYTHON_PREFIX/.pytest_cache
-    rootdir: $REGENDOC_TMPDIR, inifile:
+    rootdir: $REGENDOC_TMPDIR
     collected 6 items
 
     test_example.py .FEsxX                                               [100%]
@@ -314,13 +318,13 @@ captured output:
     E       assert 0
 
     test_example.py:14: AssertionError
-    ========================= short test summary info ==========================
-    PASSED test_example.py::test_ok
     ================================== PASSES ==================================
     _________________________________ test_ok __________________________________
     --------------------------- Captured stdout call ---------------------------
     ok
-     1 failed, 1 passed, 1 skipped, 1 xfailed, 1 xpassed, 1 error in 0.12 seconds
+    ========================= short test summary info ==========================
+    PASSED test_example.py::test_ok
+    = 1 failed, 1 passed, 1 skipped, 1 xfailed, 1 xpassed, 1 error in 0.12 seconds =
 
 .. _pdb-option:
 
@@ -384,10 +388,8 @@ in your code and pytest automatically disables its output capture for that test:
 * Output capture in other tests is not affected.
 * Any prior test output that has already been captured and will be processed as
   such.
-* Any later output produced within the same test will not be captured and will
-  instead get sent directly to ``sys.stdout``. Note that this holds true even
-  for test output occurring after you exit the interactive PDB_ tracing session
-  and continue with the regular test run.
+* Output capture gets resumed when ending the debugger session (via the
+  ``continue`` command).
 
 
 .. _`breakpoint-builtin`:
@@ -408,7 +410,6 @@ Pytest supports the use of ``breakpoint()`` with the following behaviours:
 Profiling test execution duration
 -------------------------------------
 
-.. versionadded: 2.2
 
 To get a list of the slowest 10 test durations:
 
@@ -417,6 +418,38 @@ To get a list of the slowest 10 test durations:
     pytest --durations=10
 
 By default, pytest will not show test durations that are too small (<0.01s) unless ``-vv`` is passed on the command-line.
+
+
+.. _faulthandler:
+
+Fault Handler
+-------------
+
+.. versionadded:: 5.0
+
+The `faulthandler <https://docs.python.org/3/library/faulthandler.html>`__ standard module
+can be used to dump Python tracebacks on a segfault or after a timeout.
+
+The module is automatically enabled for pytest runs, unless the ``-p no:faulthandler`` is given
+on the command-line.
+
+Also the :confval:`faulthandler_timeout=X<faulthandler_timeout>` configuration option can be used
+to dump the traceback of all threads if a test takes longer than ``X``
+seconds to finish (not available on Windows).
+
+.. note::
+
+    This functionality has been integrated from the external
+    `pytest-faulthandler <https://github.com/pytest-dev/pytest-faulthandler>`__ plugin, with two
+    small differences:
+
+    * To disable it, use ``-p no:faulthandler`` instead of ``--no-faulthandler``: the former
+      can be used with any plugin, so it saves one option.
+
+    * The ``--faulthandler-timeout`` command-line option has become the
+      :confval:`faulthandler_timeout` configuration option. It can still be configured from
+      the command-line using ``-o faulthandler_timeout=X``.
+
 
 Creating JUnitXML format files
 ----------------------------------------------------
@@ -430,7 +463,7 @@ integration servers, use this invocation:
 
 to create an XML file at ``path``.
 
-.. versionadded:: 3.1
+
 
 To set the name of the root test suite xml item, you can configure the ``junit_suite_name`` option in your config file:
 
@@ -457,13 +490,6 @@ instead, configure the ``junit_duration_report`` option like this:
 
 record_property
 ^^^^^^^^^^^^^^^
-
-.. versionadded:: 2.8
-.. versionchanged:: 3.5
-
-   Fixture renamed from ``record_xml_property`` to ``record_property`` as user
-   properties are now available to all reporters.
-   ``record_xml_property`` is now deprecated.
 
 If you want to log additional information for a test, you can use the
 ``record_property`` fixture:
@@ -522,15 +548,13 @@ Will result in:
 
 .. warning::
 
-    ``record_property`` is an experimental feature and may change in the future.
-
-    Also please note that using this feature will break any schema verification.
+    Please note that using this feature will break schema verifications for the latest JUnitXML schema.
     This might be a problem when used with some CI servers.
 
 record_xml_attribute
 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
 
-.. versionadded:: 3.4
+
 
 To add an additional xml attribute to a testcase element, you can use
 ``record_xml_attribute`` fixture. This can also be used to override existing values:
@@ -587,43 +611,45 @@ Instead, this will add an attribute ``assertions="REQ-1234"`` inside the generat
             </xs:complexType>
         </xs:element>
 
-LogXML: add_global_property
-^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+.. warning::
 
-.. versionadded:: 3.0
+    Please note that using this feature will break schema verifications for the latest JUnitXML schema.
+    This might be a problem when used with some CI servers.
 
-If you want to add a properties node in the testsuite level, which may contains properties that are relevant
-to all testcases you can use ``LogXML.add_global_properties``
+.. _record_testsuite_property example:
+
+record_testsuite_property
+^^^^^^^^^^^^^^^^^^^^^^^^^
+
+.. versionadded:: 4.5
+
+If you want to add a properties node at the test-suite level, which may contains properties
+that are relevant to all tests, you can use the ``record_testsuite_property`` session-scoped fixture:
+
+The ``record_testsuite_property`` session-scoped fixture can be used to add properties relevant
+to all tests.
 
 .. code-block:: python
 
     import pytest
 
 
-    @pytest.fixture(scope="session")
-    def log_global_env_facts(f):
-
-        if pytest.config.pluginmanager.hasplugin("junitxml"):
-            my_junit = getattr(pytest.config, "_xml", None)
-
-        my_junit.add_global_property("ARCH", "PPC")
-        my_junit.add_global_property("STORAGE_TYPE", "CEPH")
-
-
-    @pytest.mark.usefixtures(log_global_env_facts.__name__)
-    def start_and_prepare_env():
-        pass
+    @pytest.fixture(scope="session", autouse=True)
+    def log_global_env_facts(record_testsuite_property):
+        record_testsuite_property("ARCH", "PPC")
+        record_testsuite_property("STORAGE_TYPE", "CEPH")
 
 
     class TestMe(object):
         def test_foo(self):
             assert True
 
-This will add a property node below the testsuite node to the generated xml:
+The fixture is a callable which receives ``name`` and ``value`` of a ``<property>`` tag
+added at the test-suite level of the generated xml:
 
 .. code-block:: xml
 
-    <testsuite errors="0" failures="0" name="pytest" skips="0" tests="1" time="0.006">
+    <testsuite errors="0" failures="0" name="pytest" skipped="0" tests="1" time="0.006">
       <properties>
         <property name="ARCH" value="PPC"/>
         <property name="STORAGE_TYPE" value="CEPH"/>
@@ -631,16 +657,16 @@ This will add a property node below the testsuite node to the generated xml:
       <testcase classname="test_me.TestMe" file="test_me.py" line="16" name="test_foo" time="0.000243663787842"/>
     </testsuite>
 
-.. warning::
+``name`` must be a string, ``value`` will be converted to a string and properly xml-escaped.
 
-    This is an experimental feature, and its interface might be replaced
-    by something more powerful and general in future versions. The
-    functionality per-se will be kept.
+The generated XML is compatible with the latest ``xunit`` standard, contrary to `record_property`_
+and `record_xml_attribute`_.
+
 
 Creating resultlog format files
 ----------------------------------------------------
 
-.. deprecated:: 3.0
+
 
     This option is rarely used and is scheduled for removal in 5.0.
 
@@ -680,6 +706,22 @@ for example ``-x`` if you only want to send one particular failure.
 
 Currently only pasting to the http://bpaste.net service is implemented.
 
+Early loading plugins
+---------------------
+
+You can early-load plugins (internal and external) explicitly in the command-line with the ``-p`` option::
+
+    pytest -p mypluginmodule
+
+The option receives a ``name`` parameter, which can be:
+
+* A full module dotted name, for example ``myproject.plugins``. This dotted name must be importable.
+* The entry-point name of a plugin. This is the name passed to ``setuptools`` when the plugin is
+  registered. For example to early-load the `pytest-cov <https://pypi.org/project/pytest-cov/>`__ plugin you can use::
+
+    pytest -p pytest_cov
+
+
 Disabling plugins
 -----------------
 
@@ -698,7 +740,7 @@ executing doctest tests from text files, invoke pytest like this:
 Calling pytest from Python code
 ----------------------------------------------------
 
-.. versionadded:: 2.0
+
 
 You can invoke ``pytest`` from Python code directly::
 

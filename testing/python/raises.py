@@ -1,13 +1,11 @@
 import sys
 
-import six
-
 import pytest
 from _pytest.outcomes import Failed
 from _pytest.warning_types import PytestDeprecationWarning
 
 
-class TestRaises(object):
+class TestRaises:
     def test_raises(self):
         source = "int('qwe')"
         with pytest.warns(PytestDeprecationWarning):
@@ -35,7 +33,7 @@ class TestRaises(object):
         pytest.raises(ValueError, int, "hello")
 
     def test_raises_callable_no_exception(self):
-        class A(object):
+        class A:
             def __call__(self):
                 pass
 
@@ -189,7 +187,7 @@ class TestRaises(object):
         """
         import gc
 
-        class T(object):
+        class T:
             def __call__(self):
                 raise ValueError
 
@@ -204,6 +202,9 @@ class TestRaises(object):
         assert sys.exc_info() == (None, None, None)
 
         del t
+        # Make sure this does get updated in locals dict
+        # otherwise it could keep a reference
+        locals()
 
         # ensure the t instance is not stuck in a cyclic reference
         for o in gc.get_objects():
@@ -219,12 +220,19 @@ class TestRaises(object):
             int("asdf")
 
         msg = "with base 16"
-        expr = r"Pattern '{}' not found in 'invalid literal for int\(\) with base 10: 'asdf''".format(
+        expr = r"Pattern '{}' not found in \"invalid literal for int\(\) with base 10: 'asdf'\"".format(
             msg
         )
         with pytest.raises(AssertionError, match=expr):
             with pytest.raises(ValueError, match=msg):
                 int("asdf", base=10)
+
+    def test_match_failure_string_quoting(self):
+        with pytest.raises(AssertionError) as excinfo:
+            with pytest.raises(AssertionError, match="'foo"):
+                raise AssertionError("'bar")
+        msg, = excinfo.value.args
+        assert msg == 'Pattern "\'foo" not found in "\'bar"'
 
     def test_raises_match_wrong_type(self):
         """Raising an exception with the wrong type and match= given.
@@ -237,17 +245,14 @@ class TestRaises(object):
                 int("asdf")
 
     def test_raises_exception_looks_iterable(self):
-        from six import add_metaclass
-
-        class Meta(type(object)):
+        class Meta(type):
             def __getitem__(self, item):
                 return 1 / 0
 
             def __len__(self):
                 return 1
 
-        @add_metaclass(Meta)
-        class ClassLooksIterableException(Exception):
+        class ClassLooksIterableException(Exception, metaclass=Meta):
             pass
 
         with pytest.raises(
@@ -260,20 +265,12 @@ class TestRaises(object):
         """Test current behavior with regard to exceptions via __class__ (#4284)."""
 
         class CrappyClass(Exception):
-            @property
+            # Type ignored because it's bypassed intentionally.
+            @property  # type: ignore
             def __class__(self):
                 assert False, "via __class__"
 
-        if six.PY2:
-            with pytest.raises(pytest.fail.Exception) as excinfo:
-                with pytest.raises(CrappyClass()):
-                    pass
-            assert "DID NOT RAISE" in excinfo.value.args[0]
-
-            with pytest.raises(CrappyClass) as excinfo:
-                raise CrappyClass()
-        else:
-            with pytest.raises(AssertionError) as excinfo:
-                with pytest.raises(CrappyClass()):
-                    pass
-            assert "via __class__" in excinfo.value.args[0]
+        with pytest.raises(AssertionError) as excinfo:
+            with pytest.raises(CrappyClass()):
+                pass
+        assert "via __class__" in excinfo.value.args[0]

@@ -1,12 +1,9 @@
 """ discover and run doctests in modules and test files."""
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import inspect
 import platform
 import sys
 import traceback
+import warnings
 from contextlib import contextmanager
 
 import pytest
@@ -15,6 +12,8 @@ from _pytest._code.code import ReprFileLocation
 from _pytest._code.code import TerminalRepr
 from _pytest.compat import safe_getattr
 from _pytest.fixtures import FixtureRequest
+from _pytest.outcomes import Skipped
+from _pytest.warning_types import PytestWarning
 
 DOCTEST_REPORT_CHOICE_NONE = "none"
 DOCTEST_REPORT_CHOICE_CDIFF = "cdiff"
@@ -124,7 +123,7 @@ class ReprFailDoctest(TerminalRepr):
 
 class MultipleDoctestFailures(Exception):
     def __init__(self, failures):
-        super(MultipleDoctestFailures, self).__init__()
+        super().__init__()
         self.failures = failures
 
 
@@ -153,6 +152,8 @@ def _init_runner_class():
                 raise failure
 
         def report_unexpected_exception(self, out, test, example, exc_info):
+            if isinstance(exc_info[1], Skipped):
+                raise exc_info[1]
             failure = doctest.UnexpectedException(test, example, exc_info)
             if self.continue_on_failure:
                 out.append(failure)
@@ -177,7 +178,7 @@ def _get_runner(checker=None, verbose=None, optionflags=0, continue_on_failure=T
 
 class DoctestItem(pytest.Item):
     def __init__(self, name, parent, runner=None, dtest=None):
-        super(DoctestItem, self).__init__(name, parent)
+        super().__init__(name, parent)
         self.runner = runner
         self.dtest = dtest
         self.obj = None
@@ -254,7 +255,7 @@ class DoctestItem(pytest.Item):
                     ]
                     indent = ">>>"
                     for line in example.source.splitlines():
-                        lines.append("??? %s %s" % (indent, line))
+                        lines.append("??? {} {}".format(indent, line))
                         indent = "..."
                 if isinstance(failure, doctest.DocTestFailure):
                     lines += checker.output_difference(
@@ -267,7 +268,7 @@ class DoctestItem(pytest.Item):
                 reprlocation_lines.append((reprlocation, lines))
             return ReprFailDoctest(reprlocation_lines)
         else:
-            return super(DoctestItem, self).repr_failure(excinfo)
+            return super().repr_failure(excinfo)
 
     def reportinfo(self):
         return self.fspath, self.dtest.lineno, "[doctest] %s" % self.name
@@ -329,7 +330,6 @@ class DoctestTextfile(pytest.Module):
             checker=_get_checker(),
             continue_on_failure=_get_continue_on_failure(self.config),
         )
-        _fix_spoof_python2(runner, encoding)
 
         parser = doctest.DocTestParser()
         test = parser.get_doctest(text, globs, name, filename, 0)
@@ -364,22 +364,27 @@ def _patch_unwrap_mock_aware():
     contextmanager which replaces ``inspect.unwrap`` with a version
     that's aware of mock objects and doesn't recurse on them
     """
-    real_unwrap = getattr(inspect, "unwrap", None)
-    if real_unwrap is None:
-        yield
-    else:
+    real_unwrap = inspect.unwrap
 
-        def _mock_aware_unwrap(obj, stop=None):
-            if stop is None:
-                return real_unwrap(obj, stop=_is_mocked)
-            else:
-                return real_unwrap(obj, stop=lambda obj: _is_mocked(obj) or stop(obj))
-
-        inspect.unwrap = _mock_aware_unwrap
+    def _mock_aware_unwrap(obj, stop=None):
         try:
-            yield
-        finally:
-            inspect.unwrap = real_unwrap
+            if stop is None or stop is _is_mocked:
+                return real_unwrap(obj, stop=_is_mocked)
+            return real_unwrap(obj, stop=lambda obj: _is_mocked(obj) or stop(obj))
+        except Exception as e:
+            warnings.warn(
+                "Got %r when unwrapping %r.  This is usually caused "
+                "by a violation of Python's object protocol; see e.g. "
+                "https://github.com/pytest-dev/pytest/issues/5080" % (e, obj),
+                PytestWarning,
+            )
+            raise
+
+    inspect.unwrap = _mock_aware_unwrap
+    try:
+        yield
+    finally:
+        inspect.unwrap = real_unwrap
 
 
 class DoctestModule(pytest.Module):
@@ -533,32 +538,6 @@ def _get_report_choice(key):
         DOCTEST_REPORT_CHOICE_ONLY_FIRST_FAILURE: doctest.REPORT_ONLY_FIRST_FAILURE,
         DOCTEST_REPORT_CHOICE_NONE: 0,
     }[key]
-
-
-def _fix_spoof_python2(runner, encoding):
-    """
-    Installs a "SpoofOut" into the given DebugRunner so it properly deals with unicode output. This
-    should patch only doctests for text files because they don't have a way to declare their
-    encoding. Doctests in docstrings from Python modules don't have the same problem given that
-    Python already decoded the strings.
-
-    This fixes the problem related in issue #2434.
-    """
-    from _pytest.compat import _PY2
-
-    if not _PY2:
-        return
-
-    from doctest import _SpoofOut
-
-    class UnicodeSpoof(_SpoofOut):
-        def getvalue(self):
-            result = _SpoofOut.getvalue(self)
-            if encoding and isinstance(result, bytes):
-                result = result.decode(encoding)
-            return result
-
-    runner._fakeout = UnicodeSpoof()
 
 
 @pytest.fixture(scope="session")

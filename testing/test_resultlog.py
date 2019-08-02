@@ -1,7 +1,3 @@
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-
 import os
 
 import py
@@ -11,7 +7,6 @@ import pytest
 from _pytest.resultlog import pytest_configure
 from _pytest.resultlog import pytest_unconfigure
 from _pytest.resultlog import ResultLog
-
 
 pytestmark = pytest.mark.filterwarnings("ignore:--result-log is deprecated")
 
@@ -55,7 +50,7 @@ def test_write_log_entry():
     assert entry_lines[1:] == [" " + line for line in longrepr.splitlines()]
 
 
-class TestWithFunctionIntegration(object):
+class TestWithFunctionIntegration:
     # XXX (hpk) i think that the resultlog plugin should
     # provide a Parser object so that one can remain
     # ignorant regarding formatting details.

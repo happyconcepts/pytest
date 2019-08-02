@@ -5,7 +5,7 @@
 Cache: working with cross-testrun state
 =======================================
 
-.. versionadded:: 2.8
+
 
 Usage
 ---------
@@ -80,9 +80,9 @@ If you then run it with ``--lf``:
 
     $ pytest --lf
     =========================== test session starts ============================
-    platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+    platform linux -- Python 3.x.y, pytest-5.x.y, py-1.x.y, pluggy-0.x.y
     cachedir: $PYTHON_PREFIX/.pytest_cache
-    rootdir: $REGENDOC_TMPDIR, inifile:
+    rootdir: $REGENDOC_TMPDIR
     collected 50 items / 48 deselected / 2 selected
     run-last-failure: rerun previous 2 failures
 
@@ -113,8 +113,8 @@ If you then run it with ``--lf``:
     test_50.py:6: Failed
     ================= 2 failed, 48 deselected in 0.12 seconds ==================
 
-You have run only the two failing test from the last run, while 48 tests have
-not been run ("deselected").
+You have run only the two failing tests from the last run, while the 48 passing
+tests have not been run ("deselected").
 
 Now, if you run with the ``--ff`` option, all tests will be run but the first
 previous failures will be executed first (as can be seen from the series
@@ -124,9 +124,9 @@ of ``FF`` and dots):
 
     $ pytest --ff
     =========================== test session starts ============================
-    platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+    platform linux -- Python 3.x.y, pytest-5.x.y, py-1.x.y, pluggy-0.x.y
     cachedir: $PYTHON_PREFIX/.pytest_cache
-    rootdir: $REGENDOC_TMPDIR, inifile:
+    rootdir: $REGENDOC_TMPDIR
     collected 50 items
     run-last-failure: rerun previous 2 failures first
 
@@ -218,15 +218,13 @@ If you run this command for the first time, you can see the print statement:
         def test_function(mydata):
     >       assert mydata == 23
     E       assert 42 == 23
-    E         -42
-    E         +23
 
     test_caching.py:17: AssertionError
     -------------------------- Captured stdout setup ---------------------------
     running expensive computation...
     1 failed in 0.12 seconds
 
-If you run it a second time the value will be retrieved from
+If you run it a second time, the value will be retrieved from
 the cache and nothing will be printed:
 
 .. code-block:: pytest
@@ -241,8 +239,6 @@ the cache and nothing will be printed:
         def test_function(mydata):
     >       assert mydata == 23
     E       assert 42 == 23
-    E         -42
-    E         +23
 
     test_caching.py:17: AssertionError
     1 failed in 0.12 seconds
@@ -251,7 +247,7 @@ See the :ref:`cache-api` for more details.
 
 
 Inspecting Cache content
--------------------------------
+------------------------
 
 You can always peek at the content of the cache using the
 ``--cache-show`` command line option:
@@ -260,11 +256,11 @@ You can always peek at the content of the cache using the
 
     $ pytest --cache-show
     =========================== test session starts ============================
-    platform linux -- Python 3.x.y, pytest-4.x.y, py-1.x.y, pluggy-0.x.y
+    platform linux -- Python 3.x.y, pytest-5.x.y, py-1.x.y, pluggy-0.x.y
     cachedir: $PYTHON_PREFIX/.pytest_cache
-    rootdir: $REGENDOC_TMPDIR, inifile:
+    rootdir: $REGENDOC_TMPDIR
     cachedir: $PYTHON_PREFIX/.pytest_cache
-    ------------------------------- cache values -------------------------------
+    --------------------------- cache values for '*' ---------------------------
     cache/lastfailed contains:
       {'test_50.py::test_num[17]': True,
        'test_50.py::test_num[25]': True,
@@ -281,8 +277,25 @@ You can always peek at the content of the cache using the
 
     ======================= no tests ran in 0.12 seconds =======================
 
+``--cache-show`` takes an optional argument to specify a glob pattern for
+filtering:
+
+.. code-block:: pytest
+
+    $ pytest --cache-show example/*
+    =========================== test session starts ============================
+    platform linux -- Python 3.x.y, pytest-5.x.y, py-1.x.y, pluggy-0.x.y
+    cachedir: $PYTHON_PREFIX/.pytest_cache
+    rootdir: $REGENDOC_TMPDIR
+    cachedir: $PYTHON_PREFIX/.pytest_cache
+    ----------------------- cache values for 'example/*' -----------------------
+    example/value contains:
+      42
+
+    ======================= no tests ran in 0.12 seconds =======================
+
 Clearing Cache content
--------------------------------
+----------------------
 
 You can instruct pytest to clear all cache files and values
 by adding the ``--cache-clear`` option like this:
